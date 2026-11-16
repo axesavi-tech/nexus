@@ -1,26 +1,78 @@
 @import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
 
+/* ===== NEXUS design tokens ===== */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0d0e12;
+  --bg-2: #13151b;
+  --panel: #171a21;
+  --panel-2: #1d2029;
+  --line: #2a2e3a;
+  --line-2: #363b4a;
+  --ink: #ecebe6;
+  --ink-2: #b4b3ad;
+  --ink-3: #7d7d85;
+  --accent: #e8b86d;      /* warm amber — thinking */
+  --accent-2: #7fb8a4;    /* sage — execution */
+  --danger: #e07a6a;
+  --ok: #8cc49a;
+  --warn: #e3c16f;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --sans: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* node semantics */
+  --t-thought: #e8b86d; --t-question: #9aa8ff; --t-problem: #e07a6a; --t-insight: #c6a7ff;
+  --t-opportunity: #7fd1b9; --t-idea: #ffd36e; --t-hypothesis: #a3b8d6; --t-assumption: #e3a76f;
+  --t-evidence: #8cc49a; --t-constraint: #b5937a; --t-stakeholder: #79c1e8; --t-solution: #7fb8a4;
+  --t-decision: #f2f0e6; --t-risk: #ef8f8f; --t-experiment: #b9d37a; --t-dependency: #9c9fae;
+  --t-action: #6fc3df; --t-milestone: #d6b0ff; --t-outcome: #9fe0a6;
+}
+:root[data-theme="light"] {
+  --bg: #f6f4ef; --bg-2: #efece5; --panel: #ffffff; --panel-2: #f8f6f1; --line: #e2ddd2; --line-2: #d3cdbf;
+  --ink: #1c1b19; --ink-2: #4c4a45; --ink-3: #85827a; --accent: #a8641a; --accent-2: #2f7a63;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg: var(--bg); --color-bg2: var(--bg-2); --color-panel: var(--panel); --color-panel2: var(--panel-2);
+  --color-line: var(--line); --color-line2: var(--line-2); --color-ink: var(--ink); --color-ink2: var(--ink-2); --color-ink3: var(--ink-3);
+  --color-accent: var(--accent); --color-accent2: var(--accent-2); --color-danger: var(--danger); --color-ok: var(--ok); --color-warn: var(--warn);
+  --font-serif: var(--serif); --font-sans: var(--sans); --font-mono: var(--mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+::selection { background: color-mix(in oklab, var(--accent) 40%, transparent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
+.serif { font-family: var(--serif); letter-spacing: -0.01em; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--ink-2); }
+.btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; padding: 7px 14px; font-size: 13.5px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--ink); transition: background .15s, border-color .15s, transform .1s; }
+.btn:hover { border-color: var(--ink-3); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .45; pointer-events: none; }
+.btn-primary { background: var(--accent); color: #1a140b; border-color: transparent; font-weight: 600; }
+.btn-primary:hover { filter: brightness(1.07); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn-ghost:hover { background: var(--panel-2); color: var(--ink); }
+.input { width: 100%; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; color: var(--ink); font-size: 14px; }
+.input:focus { outline: none; border-color: var(--accent); }
+.label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.fade-in { animation: fade .35s ease both; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.pulse { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
+.scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 8px; }
+.glow { background: radial-gradient(1200px 500px at 50% -10%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 60%), radial-gradient(800px 400px at 90% 110%, color-mix(in oklab, var(--accent-2) 10%, transparent), transparent 60%); }
+
+/* React Flow theming */
+.react-flow { --xy-background-color: var(--bg); --xy-edge-stroke: var(--line-2); --xy-minimap-background-color: var(--panel); --xy-controls-button-background-color: var(--panel-2); --xy-controls-button-color: var(--ink-2); --xy-controls-button-border-color: var(--line); }
+.react-flow__attribution { display: none; }
+.react-flow__minimap { border: 1px solid var(--line); border-radius: 10px; }
+.react-flow__controls { border-radius: 10px; overflow: hidden; border: 1px solid var(--line); box-shadow: none; }
+.react-flow__edge-path { stroke-width: 1.6; }
+.react-flow__node.selected .nx-node { box-shadow: 0 0 0 2px var(--accent); }
+
+input[type="range"] { accent-color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

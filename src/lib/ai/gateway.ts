@@ -1,0 +1,182 @@
+/**
+ * Provider-independent AI gateway.
+ * - Each operation declares an input shape, a zod output schema, a prompt builder and a deterministic dev fallback.
+ * - Providers return raw JSON; the gateway validates it against the schema (one corrective retry) before returning.
+ * - Prose is never written to the database directly: callers receive validated structures only.
+ */
+import { z } from "zod";
+import Anthropic from "@anthropic-ai/sdk";
+import { SYSTEM, ACTION_GUIDE } from "./prompts";
+import {
+  InterpretationSchema, NodePatchSchema, IdeasSchema, EvaluationSchema, BlueprintSchema, RoadmapSchema,
+  DIMENSIONS, type NodeAction, type Sliders,
+} from "../schemas";
+import * as dev from "./dev";
+import { byId as frameworkById } from "../frameworks";
+
+export interface ProviderResult { json: unknown; model: string; inputTokens?: number; outputTokens?: number }
+export interface Provider {
+  name: string;
+  call(args: { system: string; user: string; toolName: string; schema: Record<string, unknown>; maxTokens: number }): Promise<ProviderResult>;
+}
+
+class AnthropicProvider implements Provider {
+  name = "anthropic";
+  private client: Anthropic;
+  constructor(apiKey: string, private model: string) { this.client = new Anthropic({ apiKey }); }
+  async call({ system, user, toolName, schema, maxTokens }: Parameters<Provider["call"]>[0]): Promise<ProviderResult> {
+    const res = await this.client.messages.create({
+      model: this.model,
+      max_tokens: maxTokens,
+      system,
+      tools: [{ name: toolName, description: "Return the structured result.", input_schema: schema as Anthropic.Tool.InputSchema }],
+      tool_choice: { type: "tool", name: toolName },
+      messages: [{ role: "user", content: user }],
+    });
+    const block = res.content.find((b) => b.type === "tool_use");
+    if (!block || block.type !== "tool_use") throw new Error("Model did not return structured output");
+    return { json: block.input, model: res.model, inputTokens: res.usage?.input_tokens, outputTokens: res.usage?.output_tokens };
+  }
+}
+
+export function getProvider(): Provider | null {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return null;
+  return new AnthropicProvider(key, process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5");
+}
+
+const wrap = (label: string, v: unknown) => `<user_content label="${label}">\n${typeof v === "string" ? v : JSON.stringify(v, null, 1)}\n</user_content>`;
+
+// ---------- Operation definitions ----------
+const AnalyzeIn = z.object({ thought: z.string().min(1).max(8000), mode: z.enum(["free", "guided", "strategic"]), answers: z.record(z.string(), z.string()).optional() });
+const NodeIn = z.object({
+  action: z.enum(["expand", "deeper", "challenge", "different", "root_cause", "connect", "evidence", "evaluate", "to_solution", "to_action", "missing", "framework", "custom"]),
+  frameworkId: z.string().optional(),
+  instruction: z.string().max(1000).optional(),
+  thought: z.string().max(8000),
+  context: z.object({
+    focus: z.object({ id: z.string(), type: z.string(), title: z.string(), description: z.string() }),
+    ancestry: z.array(z.any()), siblings: z.array(z.any()), children: z.array(z.any()), others: z.array(z.any()),
+  }),
+});
+const SliderIn = z.record(z.string(), z.number().min(0).max(100));
+const IdeateIn = z.object({
+  thought: z.string().max(8000),
+  interpretation: z.any(),
+  focus: z.array(z.object({ id: z.string(), type: z.string(), title: z.string(), description: z.string().optional() })).max(30),
+  sliders: SliderIn,
+  previousTitles: z.array(z.string()).max(20).optional(),
+});
+const EvaluateIn = z.object({ thought: z.string().max(8000), ideas: z.array(z.any()).min(1).max(8), constraints: z.array(z.string()).max(10).optional() });
+const BlueprintIn = z.object({ thought: z.string().max(8000), interpretation: z.any(), idea: z.any(), evaluation: z.any().optional(), decisionRationale: z.string().max(2000).optional() });
+const RoadmapIn = z.object({ thought: z.string().max(8000), blueprint: z.any(), approach: z.enum(["agile", "waterfall", "hybrid", "personal"]), teamNote: z.string().max(600).optional() });
+
+function sliderText(s: Record<string, number>) {
+  return Object.entries(s).map(([k, v]) => `${k}: ${v}/100`).join(", ");
+}
+
+export const OPS = {
+  analyze: {
+    input: AnalyzeIn, output: InterpretationSchema, tokens: 3000,
+    prompt: (i: z.infer<typeof AnalyzeIn>) => `Analyse this thought. Preserve the user's intent and wording; do not lock into a single interpretation.
+Entry mode: ${i.mode} (${i.mode === "free" ? "minimal structure, creative" : i.mode === "guided" ? "guided questions" : "rigorous strategic analysis"}).
+Ask at most 3 clarifying questions, only ones that materially change direction.
+Category guide: business (commercial venture/brand/offer), software (digital/AI product), operational (process/org improvement), physical (hardware/invention), personal (personal, educational, community), abstract (open concept, no domain yet).
+${wrap("thought", i.thought)}
+${i.answers && Object.keys(i.answers).length ? wrap("answers_to_clarifying_questions", i.answers) : ""}`,
+    dev: (i: z.infer<typeof AnalyzeIn>) => dev.analyze(i.thought, i.mode),
+  },
+  node: {
+    input: NodeIn, output: NodePatchSchema, tokens: 3000,
+    prompt: (i: z.infer<typeof NodeIn>) => {
+      const fw = i.frameworkId ? frameworkById(i.frameworkId) : undefined;
+      return `Operation: ${ACTION_GUIDE[i.action as NodeAction]}
+${fw ? `Framework: ${fw.name}. How to apply: ${fw.prompt}` : ""}
+${i.instruction ? `User instruction: ${wrap("instruction", i.instruction)}` : ""}
+Modify only the relevant portion of the map. Use parentRef = an existing node id (normally the focus id "${i.context.focus.id}") or the ref of a node you add in this patch. In links, refer to existing nodes by id. Only update existing nodes when it adds clarity. Keep titles short (≤ 10 words) and descriptions to 1-3 sentences.
+Original thought: ${wrap("thought", i.thought)}
+Map context: ${wrap("map_context", i.context)}`;
+    },
+    dev: (i: z.infer<typeof NodeIn>) => dev.nodeAction(i.action as NodeAction, i.context.focus, i.instruction, i.frameworkId),
+  },
+  ideate: {
+    input: IdeateIn, output: IdeasSchema, tokens: 5000,
+    prompt: (i: z.infer<typeof IdeateIn>) => `Generate 4 genuinely different solution directions — exactly one per tier: conservative (low risk, limited disruption), practical (meaningful differentiation, credible feasibility), disruptive (redesigns the existing model), moonshot (high uncertainty, transformative). Each must differ in mechanism, target user or business model, not just wording.
+Creativity controls (adapt your output to them): ${sliderText(i.sliders)}.
+Each idea needs intended users, a complete value proposition, how it works, what differentiates it, key assumptions and risks. Use ids I1..I4. In originNodeIds cite the map node ids the idea draws from.
+${i.previousTitles?.length ? `Avoid repeating these earlier ideas: ${i.previousTitles.join("; ")}` : ""}
+In notes, state whether the problem itself might be better reframed, and whether a simpler alternative might beat all four.
+Thought: ${wrap("thought", i.thought)}
+Understanding: ${wrap("interpretation", i.interpretation)}
+Selected map nodes: ${wrap("map_nodes", i.focus)}`,
+    dev: (i: z.infer<typeof IdeateIn>) => dev.ideate(i.thought, i.focus, i.sliders as Sliders),
+  },
+  evaluate: {
+    input: EvaluateIn, output: EvaluationSchema, tokens: 6000,
+    prompt: (i: z.infer<typeof EvaluateIn>) => `Score each idea on these dimensions (0-100, explicit criteria): ${DIMENSIONS.map((d) => `${d.key} = ${d.label}`).join("; ")}.
+Scoring criteria: 0-20 very weak, 21-40 weak, 41-60 uncertain/moderate, 61-80 strong, 81-100 exceptional. For "risk", higher = safer.
+Use the dimension keys exactly. If there is genuinely no basis to judge a dimension, set score to null rather than inventing precision. Set evidence to "missing" whenever the score rests on your inference rather than information the user gave. Confidence should usually be low or medium without research.
+impact, riskLevel and costLevel are 1-5 relative estimates. Do NOT compute weighted totals — the platform does the arithmetic.
+In caveats, warn what could change the ranking.
+Thought: ${wrap("thought", i.thought)}
+Known constraints: ${wrap("constraints", i.constraints ?? [])}
+Ideas: ${wrap("ideas", i.ideas)}`,
+    dev: (i: z.infer<typeof EvaluateIn>) => dev.evaluate(i.ideas),
+  },
+  blueprint: {
+    input: BlueprintIn, output: BlueprintSchema, tokens: 7000,
+    prompt: (i: z.infer<typeof BlueprintIn>) => `Turn the selected idea into a practical solution blueprint suited to its category.
+Category-specific sections (categorySections) must follow:
+- business: target customers, market & competitor research needed, business model, acquisition, operating model, cost & revenue drivers, partnerships, pilot & go-to-market.
+- software: PRD summary, user journeys, functional & non-functional requirements, key user stories with acceptance criteria, system architecture, data model, APIs/integrations, security, testing, deployment.
+- operational: current-state questions, as-is vs to-be process, root causes, standardisation, automation candidates, controls, change management, KPI & benefits.
+- physical: concept spec, technical feasibility questions, materials/components, prototype plan, manufacturing, supply chain assumptions, regulatory & safety assessment needs, indicative cost model.
+- personal/abstract: clarity, affordability, stakeholder needs, realistic actions, measurable progress.
+Mark each cost/benefit assumption with an honest claim type. Never state market sizes, prices or competitor facts as verified. Name alternatives rejected and why. Keep it specific to this idea.
+Thought: ${wrap("thought", i.thought)}
+Understanding: ${wrap("interpretation", i.interpretation)}
+Selected idea: ${wrap("idea", i.idea)}
+Evaluation: ${wrap("evaluation", i.evaluation ?? {})}
+Decision rationale: ${wrap("decision", i.decisionRationale ?? "")}`,
+    dev: (i: z.infer<typeof BlueprintIn>) => dev.blueprint(i.idea, i.interpretation),
+  },
+  roadmap: {
+    input: RoadmapIn, output: RoadmapSchema, tokens: 7000,
+    prompt: (i: z.infer<typeof RoadmapIn>) => `Convert this solution blueprint into a ${i.approach} delivery plan.
+${i.approach === "agile" ? "Phases are releases; milestones are release goals; tasks read like epics/features/stories." : i.approach === "waterfall" ? "Phases with gates; milestones are deliverables/gate reviews." : i.approach === "hybrid" ? "Fixed milestones with iterative work inside." : "Simple personal steps, habits and deadlines; roles are 'You' or named helpers."}
+Rules: task ids T1..Tn, milestone ids M1..Mn, phase ids P1..Pn. dependsOn must reference task ids only and must not form cycles. estimateDays are planning estimates. State planning assumptions (team size, availability, start conditions). Start with the step that most reduces uncertainty. Keep it realistic, not exhaustive.
+${i.teamNote ? `Team/context: ${wrap("team", i.teamNote)}` : ""}
+Thought: ${wrap("thought", i.thought)}
+Blueprint: ${wrap("blueprint", i.blueprint)}`,
+    dev: (i: z.infer<typeof RoadmapIn>) => dev.roadmap(i.blueprint, i.approach),
+  },
+} as const;
+export type OpName = keyof typeof OPS;
+
+export interface RunOutcome { data: unknown; mode: "live" | "dev"; model: string; tokens?: { input?: number; output?: number }; repaired?: boolean }
+
+export async function runOp(op: OpName, rawInput: unknown): Promise<RunOutcome> {
+  const def = OPS[op];
+  const input = def.input.parse(rawInput);
+  const provider = getProvider();
+  if (!provider) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = def.output.parse((def.dev as any)(input));
+    return { data, mode: "dev", model: "deterministic-dev-templates" };
+  }
+  const schema = z.toJSONSchema(def.output, { target: "draft-7" }) as Record<string, unknown>;
+  delete schema.$schema;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const user = (def.prompt as any)(input) as string;
+  let res = await provider.call({ system: SYSTEM, user, toolName: `submit_${op}`, schema, maxTokens: def.tokens });
+  let parsed = def.output.safeParse(res.json);
+  let repaired = false;
+  if (!parsed.success) {
+    repaired = true;
+    const issues = parsed.error.issues.slice(0, 8).map((x) => `${x.path.join(".")}: ${x.message}`).join("\n");
+    res = await provider.call({ system: SYSTEM, user: `${user}\n\nYour previous output failed validation:\n${issues}\nReturn a corrected, complete result.`, toolName: `submit_${op}`, schema, maxTokens: def.tokens });
+    parsed = def.output.safeParse(res.json);
+    if (!parsed.success) throw new Error("AI output failed schema validation twice; nothing was changed.");
+  }
+  return { data: parsed.data, mode: "live", model: res.model, tokens: { input: res.inputTokens, output: res.outputTokens }, repaired };
+}
