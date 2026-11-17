@@ -4,7 +4,9 @@ import { OPS, runOp, type OpName } from "@/lib/ai/gateway";
 import { hasSupabase, supabaseAsUser } from "@/lib/supabase";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Blueprint and roadmap generation can take well over a minute (up to 7k output tokens, plus one
+// corrective retry). Fluid compute allows up to 300 s on every plan, including Hobby.
+export const maxDuration = 300;
 
 // Per-instance burst limiter (best effort on serverless); the daily cap below is enforced from the database.
 const hits = new Map<string, number[]>();

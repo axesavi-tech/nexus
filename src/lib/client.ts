@@ -12,6 +12,10 @@ export async function callAI<T>(op: string, input: unknown, projectId?: string):
   }
   const res = await fetch(`/api/ai/${op}`, { method: "POST", headers, body: JSON.stringify({ input, projectId }) });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new AIError(json.error ?? `AI request failed (${res.status})`);
+  if (!res.ok) {
+    if (!json.error && (res.status === 504 || res.status === 524))
+      throw new AIError("The AI took too long to respond. Please try again — large plans can take a couple of minutes.");
+    throw new AIError(json.error ?? `AI request failed (${res.status})`);
+  }
   return json;
 }

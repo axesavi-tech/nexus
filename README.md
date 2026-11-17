@@ -56,7 +56,7 @@ vercel env add AI_DAILY_LIMIT production      # optional, default 200
 vercel --prod
 ```
 
-The AI route sets `maxDuration = 60`; blueprint and roadmap calls typically take 15–40 s.
+The AI route sets `maxDuration = 300` (Fluid compute; allowed on Hobby). Blueprint and roadmap calls can take 30–120 s.
 
 ## Operational notes
 
