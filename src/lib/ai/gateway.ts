@@ -30,13 +30,31 @@ class AnthropicProvider implements Provider {
       max_tokens: maxTokens,
       system,
       tools: [{ name: toolName, description: "Return the structured result.", input_schema: schema as Anthropic.Tool.InputSchema }],
-      tool_choice: { type: "tool", name: toolName },
-      messages: [{ role: "user", content: user }],
+      // Newer models reject forced tool_choice ("tool"/"any"), so we ask for the tool and fall back to JSON in text.
+      tool_choice: { type: "auto" },
+      messages: [{ role: "user", content: `${user}\n\nRespond ONLY by calling the ${toolName} tool.` }],
     });
+    const usage = { model: res.model, inputTokens: res.usage?.input_tokens, outputTokens: res.usage?.output_tokens };
     const block = res.content.find((b) => b.type === "tool_use");
-    if (!block || block.type !== "tool_use") throw new Error("Model did not return structured output");
-    return { json: block.input, model: res.model, inputTokens: res.usage?.input_tokens, outputTokens: res.usage?.output_tokens };
+    if (block && block.type === "tool_use") return { json: block.input, ...usage };
+    const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+    const json = extractJson(text);
+    if (json === undefined) throw new Error("Model did not return structured output");
+    return { json, ...usage };
   }
+}
+
+/** Pull the first JSON object out of free text (handles ```json fences and surrounding prose). */
+export function extractJson(text: string): unknown {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidates = [fenced?.[1], text];
+  for (const c of candidates) {
+    if (!c) continue;
+    const start = c.indexOf("{"), end = c.lastIndexOf("}");
+    if (start < 0 || end <= start) continue;
+    try { return JSON.parse(c.slice(start, end + 1)); } catch { /* try next */ }
+  }
+  return undefined;
 }
 
 export function getProvider(): Provider | null {
