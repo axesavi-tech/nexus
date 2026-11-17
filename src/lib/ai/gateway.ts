@@ -12,9 +12,10 @@ import {
   DIMENSIONS, type NodeAction, type Sliders,
 } from "../schemas";
 import * as dev from "./dev";
+import { fitToSchema } from "./fit";
 import { byId as frameworkById } from "../frameworks";
 
-export interface ProviderResult { json: unknown; model: string; inputTokens?: number; outputTokens?: number }
+export interface ProviderResult { json: unknown; model: string; inputTokens?: number; outputTokens?: number; truncated?: boolean }
 export interface Provider {
   name: string;
   call(args: { system: string; user: string; toolName: string; schema: Record<string, unknown>; maxTokens: number }): Promise<ProviderResult>;
@@ -34,7 +35,7 @@ class AnthropicProvider implements Provider {
       tool_choice: { type: "auto" },
       messages: [{ role: "user", content: `${user}\n\nRespond ONLY by calling the ${toolName} tool.` }],
     });
-    const usage = { model: res.model, inputTokens: res.usage?.input_tokens, outputTokens: res.usage?.output_tokens };
+    const usage = { model: res.model, inputTokens: res.usage?.input_tokens, outputTokens: res.usage?.output_tokens, truncated: res.stop_reason === "max_tokens" };
     const block = res.content.find((b) => b.type === "tool_use");
     if (block && block.type === "tool_use") return { json: block.input, ...usage };
     const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
@@ -142,7 +143,7 @@ Ideas: ${wrap("ideas", i.ideas)}`,
     dev: (i: z.infer<typeof EvaluateIn>) => dev.evaluate(i.ideas),
   },
   blueprint: {
-    input: BlueprintIn, output: BlueprintSchema, tokens: 7000,
+    input: BlueprintIn, output: BlueprintSchema, tokens: 10000,
     prompt: (i: z.infer<typeof BlueprintIn>) => `Turn the selected idea into a practical solution blueprint suited to its category.
 Category-specific sections (categorySections) must follow:
 - business: target customers, market & competitor research needed, business model, acquisition, operating model, cost & revenue drivers, partnerships, pilot & go-to-market.
@@ -159,10 +160,10 @@ Decision rationale: ${wrap("decision", i.decisionRationale ?? "")}`,
     dev: (i: z.infer<typeof BlueprintIn>) => dev.blueprint(i.idea, i.interpretation),
   },
   roadmap: {
-    input: RoadmapIn, output: RoadmapSchema, tokens: 7000,
+    input: RoadmapIn, output: RoadmapSchema, tokens: 12000,
     prompt: (i: z.infer<typeof RoadmapIn>) => `Convert this solution blueprint into a ${i.approach} delivery plan.
 ${i.approach === "agile" ? "Phases are releases; milestones are release goals; tasks read like epics/features/stories." : i.approach === "waterfall" ? "Phases with gates; milestones are deliverables/gate reviews." : i.approach === "hybrid" ? "Fixed milestones with iterative work inside." : "Simple personal steps, habits and deadlines; roles are 'You' or named helpers."}
-Rules: task ids T1..Tn, milestone ids M1..Mn, phase ids P1..Pn. dependsOn must reference task ids only and must not form cycles. estimateDays are planning estimates. State planning assumptions (team size, availability, start conditions). Start with the step that most reduces uncertainty. Keep it realistic, not exhaustive.
+Rules: task ids T1..Tn, milestone ids M1..Mn, phase ids P1..Pn. dependsOn must reference task ids only and must not form cycles. estimateDays are planning estimates. State planning assumptions (team size, availability, start conditions). Start with the step that most reduces uncertainty. Keep it realistic, not exhaustive: 8–20 tasks, at most 5 phases, one- or two-sentence descriptions, and keep every text field short.
 ${i.teamNote ? `Team/context: ${wrap("team", i.teamNote)}` : ""}
 Thought: ${wrap("thought", i.thought)}
 Blueprint: ${wrap("blueprint", i.blueprint)}`,
@@ -186,15 +187,21 @@ export async function runOp(op: OpName, rawInput: unknown): Promise<RunOutcome> 
   delete schema.$schema;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const user = (def.prompt as any)(input) as string;
+  const tooLong = () => new Error(`The AI's ${op} output was too long and got cut off; nothing was changed. Try again, or simplify the blueprint or team note.`);
+  const describe = (e: z.ZodError) => e.issues.slice(0, 8).map((x) => `${x.path.join(".") || "(root)"}: ${x.message}`).join("\n");
   let res = await provider.call({ system: SYSTEM, user, toolName: `submit_${op}`, schema, maxTokens: def.tokens });
-  let parsed = def.output.safeParse(res.json);
+  let parsed = def.output.safeParse(fitToSchema(res.json, schema));
   let repaired = false;
   if (!parsed.success) {
     repaired = true;
-    const issues = parsed.error.issues.slice(0, 8).map((x) => `${x.path.join(".")}: ${x.message}`).join("\n");
-    res = await provider.call({ system: SYSTEM, user: `${user}\n\nYour previous output failed validation:\n${issues}\nReturn a corrected, complete result.`, toolName: `submit_${op}`, schema, maxTokens: def.tokens });
-    parsed = def.output.safeParse(res.json);
-    if (!parsed.success) throw new Error("AI output failed schema validation twice; nothing was changed.");
+    const issues = describe(parsed.error);
+    const hint = res.truncated ? "\nYour previous output was cut off at the length limit — be markedly more concise." : "";
+    res = await provider.call({ system: SYSTEM, user: `${user}\n\nYour previous output failed validation:\n${issues}${hint}\nReturn a corrected, complete result.`, toolName: `submit_${op}`, schema, maxTokens: def.tokens });
+    parsed = def.output.safeParse(fitToSchema(res.json, schema));
+    if (!parsed.success) {
+      if (res.truncated) throw tooLong();
+      throw new Error(`AI output failed schema validation twice; nothing was changed. Details: ${describe(parsed.error).replace(/\n/g, "; ")}`);
+    }
   }
   return { data: parsed.data, mode: "live", model: res.model, tokens: { input: res.inputTokens, output: res.outputTokens }, repaired };
 }
