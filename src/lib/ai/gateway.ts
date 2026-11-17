@@ -190,6 +190,8 @@ export async function runOp(op: OpName, rawInput: unknown): Promise<RunOutcome> 
   const tooLong = () => new Error(`The AI's ${op} output was too long and got cut off; nothing was changed. Try again, or simplify the blueprint or team note.`);
   const describe = (e: z.ZodError) => e.issues.slice(0, 8).map((x) => `${x.path.join(".") || "(root)"}: ${x.message}`).join("\n");
   let res = await provider.call({ system: SYSTEM, user, toolName: `submit_${op}`, schema, maxTokens: def.tokens });
+  // Meter every attempt: retries cost real tokens too.
+  const total = { input: res.inputTokens ?? 0, output: res.outputTokens ?? 0 };
   let parsed = def.output.safeParse(fitToSchema(res.json, schema));
   let repaired = false;
   if (!parsed.success) {
@@ -197,11 +199,12 @@ export async function runOp(op: OpName, rawInput: unknown): Promise<RunOutcome> 
     const issues = describe(parsed.error);
     const hint = res.truncated ? "\nYour previous output was cut off at the length limit — be markedly more concise." : "";
     res = await provider.call({ system: SYSTEM, user: `${user}\n\nYour previous output failed validation:\n${issues}${hint}\nReturn a corrected, complete result.`, toolName: `submit_${op}`, schema, maxTokens: def.tokens });
+    total.input += res.inputTokens ?? 0; total.output += res.outputTokens ?? 0;
     parsed = def.output.safeParse(fitToSchema(res.json, schema));
     if (!parsed.success) {
       if (res.truncated) throw tooLong();
       throw new Error(`AI output failed schema validation twice; nothing was changed. Details: ${describe(parsed.error).replace(/\n/g, "; ")}`);
     }
   }
-  return { data: parsed.data, mode: "live", model: res.model, tokens: { input: res.inputTokens, output: res.outputTokens }, repaired };
+  return { data: parsed.data, mode: "live", model: res.model, tokens: total, repaired };
 }

@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useNexus } from "@/lib/store";
 import { getRepo, type VersionSummary } from "@/lib/repo";
 import type { ProjectState } from "@/lib/schemas";
-import { download, toMarkdown } from "@/lib/export";
+import { ExportDialog } from "./ExportDialog";
+import { CreditsChip } from "./SiteChrome";
 import { Spinner } from "./ui";
 import { ThoughtView } from "./views/ThoughtView";
 import { CanvasView } from "./views/CanvasView";
@@ -29,6 +30,7 @@ export function Workspace({ id }: { id: string }) {
   const { p, load, busy, error, clearError, undo, redo, past, future, saveState } = useNexus();
   const [view, setView] = useState<ViewId>("canvas");
   const [versions, setVersions] = useState<VersionSummary[] | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const lastSaved = useRef<ProjectState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -94,7 +96,8 @@ export function Workspace({ id }: { id: string }) {
         <button className="btn btn-ghost !px-2" onClick={undo} disabled={!past.length} title="Undo (⌘Z)">↶</button>
         <button className="btn btn-ghost !px-2" onClick={redo} disabled={!future.length} title="Redo (⌘⇧Z)">↷</button>
         <button className="btn btn-ghost" onClick={async () => { setVersions(versions ? null : await getRepo().versions(p.id)); }}>History</button>
-        <button className="btn btn-ghost" onClick={() => download(`${slug(p.title)}.md`, toMarkdown(p))}>Export</button>
+        <CreditsChip compact />
+        <button className="btn btn-ghost" onClick={() => setExporting(true)}>Export</button>
         <button className="btn btn-ghost !px-2" onClick={toggleTheme} title="Toggle theme" aria-label="Toggle theme">{theme === "dark" ? "☀" : "☾"}</button>
       </header>
 
@@ -160,6 +163,7 @@ export function Workspace({ id }: { id: string }) {
           )}
         </main>
       </div>
+      {exporting && <ExportDialog project={p} onClose={() => setExporting(false)} />}
     </div>
   );
 }

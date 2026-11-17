@@ -5,7 +5,8 @@ import { AuthGate } from "@/components/AuthGate";
 import { getRepo, blankProject, type ProjectSummary } from "@/lib/repo";
 import { SAMPLES } from "@/lib/samples";
 import type { Mode } from "@/lib/schemas";
-import { supabaseBrowser } from "@/lib/supabase";
+import Link from "next/link";
+import { SiteFooter, TopNav } from "@/components/SiteChrome";
 import { useNexus } from "@/lib/store";
 
 const MODES: { id: Mode; name: string; desc: string }[] = [
@@ -19,7 +20,6 @@ function Home() {
   const [text, setText] = useState("");
   const [mode, setMode] = useState<Mode>("guided");
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
-  const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [status, setStatus] = useState<{ mode: string; persistence: string } | null>(null);
@@ -47,18 +47,10 @@ function Home() {
     } catch (e) { setErr((e as Error).message); setBusy(false); }
   };
 
-  const filtered = (projects ?? []).filter((p) => !q || `${p.title} ${p.thought}`.toLowerCase().includes(q.toLowerCase()));
 
   return (
     <main className="min-h-screen glow">
-      <header className="flex items-center justify-between px-8 py-5">
-        <div className="flex items-center gap-3"><span className="text-accent text-xl">◉</span><span className="tracking-[.3em] text-sm font-semibold">NEXUS</span></div>
-        <div className="flex items-center gap-3 text-xs text-ink3">
-          {status && <span className="chip" title="AI engine">{status.mode === "live" ? "AI: live" : "AI: dev templates"}</span>}
-          {status && <span className="chip" title="Where projects are saved">{status.persistence === "supabase" ? "Saved to cloud" : "Saved in this browser"}</span>}
-          {supabaseBrowser() && <button className="btn btn-ghost" onClick={() => supabaseBrowser()!.auth.signOut()}>Sign out</button>}
-        </div>
-      </header>
+      <TopNav right={status && status.mode !== "live" ? <span className="chip !border-warn !text-warn" title="AI engine">AI: dev templates</span> : null} />
 
       <section className="max-w-3xl mx-auto px-6 pt-14 pb-10 text-center fade-in">
         <div className="label mb-4">Thought Room</div>
@@ -102,31 +94,26 @@ function Home() {
         </div>
       </section>
 
-      <section className="max-w-5xl mx-auto px-6 pb-24">
+      <section className="max-w-5xl mx-auto px-6 pb-8">
         <div className="flex items-end justify-between mb-3">
-          <div><div className="label">Knowledge Vault</div><h2 className="serif text-2xl">Your projects</h2></div>
-          <input className="input !w-64" placeholder="Search projects…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search projects" />
+          <div><div className="label">From your library</div><h2 className="serif text-2xl">Pick up where you left off</h2></div>
+          <Link href="/library" className="btn btn-ghost">Open Library →</Link>
         </div>
-        {projects === null ? <p className="text-ink3 text-sm">Loading…</p> : filtered.length === 0 ? (
-          <p className="text-ink3 text-sm">{projects.length ? "No matches." : "Nothing here yet — your first thought starts the vault."}</p>
+        {projects === null ? <p className="text-ink3 text-sm">Loading…</p> : projects.length === 0 ? (
+          <p className="text-ink3 text-sm">Nothing here yet — your first thought starts your library. Everything is saved automatically and privately.</p>
         ) : (
           <div className="grid md:grid-cols-3 gap-3">
-            {filtered.map((p) => (
-              <div key={p.id} className="card p-4 hover:border-line2 transition flex flex-col">
-                <button className="text-left flex-1" onClick={() => router.push(`/p/${p.id}`)}>
-                  <div className="text-[11px] text-ink3 mb-1 uppercase tracking-wider">{p.stage} · {new Date(p.updatedAt).toLocaleDateString()}</div>
-                  <div className="serif text-lg leading-snug mb-1">{p.title}</div>
-                  <div className="text-sm text-ink3 line-clamp-2">{p.thought}</div>
-                </button>
-                <button className="text-xs text-ink3 hover:text-danger self-end mt-2" onClick={async () => {
-                  if (!confirm(`Delete “${p.title}” permanently?`)) return;
-                  await getRepo().remove(p.id); setProjects((x) => (x ?? []).filter((y) => y.id !== p.id));
-                }}>Delete</button>
-              </div>
+            {projects.slice(0, 6).map((p) => (
+              <Link key={p.id} href={`/p/${p.id}`} className="card p-4 hover:border-line2 transition block">
+                <div className="text-[11px] text-ink3 mb-1 uppercase tracking-wider">{p.stage} · {new Date(p.updatedAt).toLocaleDateString("en-IN")}</div>
+                <div className="serif text-lg leading-snug mb-1">{p.title}</div>
+                <div className="text-sm text-ink3 line-clamp-2">{p.thought}</div>
+              </Link>
             ))}
           </div>
         )}
       </section>
+      <SiteFooter />
     </main>
   );
 }

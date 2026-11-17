@@ -1,20 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
-import { supabaseBrowser } from "@/lib/supabase";
+import { useState } from "react";
+import Link from "next/link";
+import { useSession } from "@/lib/useSession";
+import { SiteFooter } from "@/components/SiteChrome";
 
-export function useSession() {
-  const sb = supabaseBrowser();
-  const [session, setSession] = useState<Session | null>(null);
-  const [ready, setReady] = useState(!sb);
-  useEffect(() => {
-    if (!sb) return;
-    sb.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
-    const { data } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => data.subscription.unsubscribe();
-  }, [sb]);
-  return { enabled: Boolean(sb), session, ready };
-}
+export { useSession };
+import { supabaseBrowser } from "@/lib/supabase";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { enabled, session, ready } = useSession();
@@ -40,7 +31,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <main className="min-h-screen glow grid place-items-center px-6">
+    <main className="min-h-screen glow flex flex-col">
+      <div className="flex-1 grid place-items-center px-6 py-16">
       <div className="w-full max-w-sm fade-in">
         <div className="text-center mb-8">
           <div className="label mb-3">NEXUS</div>
@@ -56,7 +48,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             {mode === "in" ? "New here? Create an account" : "Have an account? Sign in"}
           </button>
         </form>
+        <p className="text-center text-xs text-ink3 mt-5">Start free with welcome credits · <Link className="text-accent" href="/pricing">See pricing</Link></p>
+        <p className="text-center text-[11px] text-ink3 mt-2">By continuing you agree to the <Link className="underline" href="/legal/terms">Terms</Link> and <Link className="underline" href="/legal/privacy">Privacy Policy</Link>.</p>
       </div>
+      </div>
+      <SiteFooter />
     </main>
   );
 }

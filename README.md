@@ -56,7 +56,7 @@ vercel env add AI_DAILY_LIMIT production      # optional, default 200
 vercel --prod
 ```
 
-The AI route sets `maxDuration = 300` (Fluid compute; allowed on Hobby). Blueprint and roadmap calls can take 30–120 s.
+The AI route sets `maxDuration = 300` (Fluid compute). Blueprint and roadmap calls can take 30–120 s. **Charging users requires Vercel Pro and Supabase Pro** (Vercel Hobby is non-commercial only; Supabase Free pauses after a week of inactivity and has no backups).
 
 ## Operational notes
 
@@ -64,6 +64,29 @@ The AI route sets `maxDuration = 300` (Fluid compute; allowed on Hobby). Bluepri
 * **Failure handling:** invalid model output gets one corrective retry with the validation errors; if it still fails nothing is changed and the user sees the error. Failures are logged in `ai_runs`.
 * **Data:** deleting a project cascades to all its nodes, edges, artifacts, tasks, versions and audit events. Export any project as Markdown from the header.
 * **Model swap:** implement the `Provider` interface in `src/lib/ai/gateway.ts` (one method) to add OpenAI, Gemini or a local model.
+
+## SaaS: workspace, billing, exports, security
+
+**Private workspace.** Every account has its own Library (`/library`) of projects, isolated by Postgres row-level security. Account page (`/account`) shows credits, usage history, purchases, full data download (JSON), password change, sign-out-everywhere and permanent account deletion (DPDP Act / GDPR erasure).
+
+**Pricing — prepaid credits at ≥ 3× fully loaded cost** (`src/lib/billing/pricing.ts`, tested in `tests/pricing.test.ts`):
+
+```
+cost(₹)  = (input_tokens × $2 + output_tokens × $10) / 1M × COST_USD_INR  +  COST_INFRA_MONTHLY_INR / COST_EXPECTED_REQUESTS_PER_MONTH
+credits  = ceil( PRICING_MARGIN × cost / (1 − COST_GATEWAY_FEE) )      — charged on actual tokens, retries included
+```
+
+Credits are never sold below ₹1, so every request nets ≥ 3× its cost after gateway fees. Packs: Spark ₹299 / 250 cr (3.59×), Builder ₹999 / 900 cr (3.33×), Studio ₹2,999 / 2,850 cr (3.16×). New accounts get 75 welcome credits. Failed AI steps are not charged. Balance is checked before each step (HTTP 402 if short).
+
+**Payments — Cashfree** (individual onboarding with PAN + Aadhaar + bank account; zero setup fee). Flow: `POST /api/billing/checkout` creates the order server-side (price from the server pack table) → Cashfree JS checkout → `POST /api/billing/webhook` (HMAC-SHA256 signature over timestamp + raw body, then re-fetches the order from Cashfree and checks the exact amount) → `nexus_complete_order()` grants credits idempotently. `/api/billing/verify` repeats the same check when the buyer returns, so credits appear even if the webhook is late. In the Cashfree dashboard: whitelist your domain and set the webhook URL to `https://<your-domain>/api/billing/webhook`.
+
+**Ledger integrity.** `billing_wallets`, `billing_ledger`, `billing_orders` are read-only to users (RLS select-own). Credits move only through `nexus_charge` / `nexus_complete_order` (SECURITY DEFINER, executable by `service_role` only). Migration: `supabase/migrations/20261117100000_billing_and_privacy.sql` (applied).
+
+**Exports** (`src/lib/exporters/`): one document model rendered as a designed PDF (cover, contents, page numbers), Word (styled headings/tables), PowerPoint (16:9 brand deck), Markdown, CSV task list (formula-injection safe) and JSON — all generated in the browser.
+
+**Security headers** (`next.config.ts`): CSP, HSTS (preload), X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy. Functions pinned to Mumbai (`vercel.json` → `bom1`). Policies at `/legal/*`, linked from every page footer.
+
+**Required environment for billing:** `SUPABASE_SERVICE_ROLE_KEY`, `CASHFREE_APP_ID`, `CASHFREE_SECRET_KEY`, `CASHFREE_ENV`, `APP_URL`, `NEXT_PUBLIC_SUPPORT_EMAIL`. Without the service key, billing is off and AI use is unmetered (development). See `.env.example`.
 
 ## Project layout
 
