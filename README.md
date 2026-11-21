@@ -1,4 +1,15 @@
-# NEXUS — the thought-to-execution intelligence engine
+# NEXUS · Idea → Outcome OS
+
+> From a thought to a defensible investment decision. From an approved idea to an executable delivery plan.
+
+**Start here:** [docs/FOUNDATION.md](docs/FOUNDATION.md) (product, architecture, UX, functional spec, plan) · [docs/CHECKLIST.md](docs/CHECKLIST.md) (what's built, tested and deferred).
+
+**Decision intelligence (new):**
+- **Evidence Lab:** typed, dated, verifiable sources linked to claims; confidence is computed from evidence quality and independence; research tasks for the gaps.
+- **Decision Intelligence:** attractiveness × evidence confidence; six mandatory risk and policy gates; a seven-status recommendation; an explainable eight-question report with citation checks; named human approval; stale-approval impact analysis.
+- **Business Case:** deterministic NPV, IRR, payback, ROI and cost of delay, with scenarios, a tornado chart and inspectable formulas.
+
+
 
 **Design Studio (new):** a full design-thinking loop on the same graph — **Empathize** (personas grounded in your research notes or flagged as proto-personas, empathy maps, emotional journey maps) → **Define** (insights, point-of-view statements, How Might We questions) → **Ideate** (spark board with 9 techniques — open brainstorm, SCAMPER, analogies, worst-possible-idea, extreme constraints, Crazy 8s, persona lens, trend mash-up, "Yes, and…" — your own sparks, theme clustering with unexplored angles, dot voting, convergence into concepts) → **Prototype & Test** (assumption map of importance × evidence, test cards with success thresholds set in advance, storyboard, results that write evidence to the map and flag downstream work when an assumption fails). **Brain dump** on the canvas turns messy notes into typed nodes for review.
 
@@ -28,7 +39,7 @@ npm run dev                     # http://localhost:3000
 ## Tests
 
 ```bash
-npm test            # 33 tests (incl. design-thinking ops & helpers): scoring maths, graph patching, cycle-breaking & scheduling,
+npm test            # 53 tests (incl. finance, evidence, decision classifier, adversarial cases): scoring maths, graph patching, cycle-breaking & scheduling,
                     # assumption propagation, framework metadata & recommendation, JSON-schema
                     # generation, and the full thought→roadmap pipeline for all five sample scenarios
 npm run typecheck

@@ -268,6 +268,7 @@ export interface ProjectState {
   tasks: Task[];
   frameworks: string[];
   design: DesignState | null;
+  os: OSState | null;
   aiMode?: "live" | "dev";
   createdAt: string;
   updatedAt: string;
@@ -371,3 +372,94 @@ export interface DesignState {
   whitespace: string[];
   tests: TestRecord[];
 }
+
+// ======================================================================================
+// Idea → Outcome OS: evidence, risk gates, decision intelligence, business case
+// ======================================================================================
+export const EVIDENCE_TYPES = [
+  "experiment_result", "analytics", "customer_interview", "survey", "market_report", "competitor",
+  "internal_document", "expert_judgement", "user_provided", "ai_hypothesis",
+] as const;
+export type EvidenceType = (typeof EVIDENCE_TYPES)[number];
+export type EvidenceTargetKind = "problem" | "concept" | "assumption" | "node";
+export interface EvidenceLinkRef { targetKind: EvidenceTargetKind; targetId: string; stance: "supports" | "contradicts" }
+export interface EvidenceItem {
+  id: string;
+  title: string;
+  origin: string;                 // where it came from: "Interview #3 — Pune buyer", "Shopify analytics Q3"
+  url?: string;
+  excerpt: string;                // the relevant quote / data point
+  type: EvidenceType;
+  publishedAt?: string | null;
+  retrievedAt: string;
+  reliability: "high" | "medium" | "low";
+  verification: "unverified" | "verified" | "disputed";
+  notes?: string;
+  links: EvidenceLinkRef[];
+  addedBy: "user" | "ai" | "system";
+  createdAt: string;
+}
+export interface ResearchTask { id: string; question: string; why: string; method: string; targetKind?: EvidenceTargetKind; targetId?: string; status: "open" | "done"; source: "ai" | "dev" | "user" }
+
+export const GATES = ["legal", "regulatory", "security", "privacy", "safety", "ethical"] as const;
+export type GateKey = (typeof GATES)[number];
+export type GateStatus = "unassessed" | "pass" | "conditional" | "fail";
+export interface GateAssessment { status: GateStatus; note: string; by: "user" | "ai" | "dev"; confirmed: boolean; at: string }
+
+export const DECISION_STATUSES = ["INVESTIGATE_FURTHER", "VALIDATE", "PROCEED_TO_BUSINESS_CASE", "APPROVE_FOR_DELIVERY", "REWORK", "HOLD", "REJECT"] as const;
+export type DecisionStatus = (typeof DECISION_STATUSES)[number];
+export interface ApprovalRecord {
+  id: string; ideaId: string; action: "approve" | "reject" | "request_validation" | "hold" | "rework";
+  by: string; note: string; at: string; recommended: DecisionStatus; fingerprint: string;
+}
+
+export const FIN_DRIVERS = ["volumeY1", "volumeGrowth", "price", "priceGrowth", "variableCostPct", "fixedOpex", "opexGrowth", "capex", "savingsPerYear"] as const;
+export type FinDriver = (typeof FIN_DRIVERS)[number];
+export interface FinInputs {
+  currency: string; horizonYears: number; discountRate: number;
+  volumeY1: number; volumeGrowth: number; price: number; priceGrowth: number;
+  variableCostPct: number; fixedOpex: number; opexGrowth: number; capex: number; savingsPerYear: number;
+  unitLabel: string;
+}
+export interface ScenarioMult { volume: number; price: number; cost: number }
+export interface BusinessCase {
+  ideaId: string;
+  inputs: FinInputs;
+  sources: Partial<Record<FinDriver, { by: "user" | "ai" | "dev"; rationale: string }>>;
+  scenarios: Record<"conservative" | "base" | "optimistic", ScenarioMult> & { custom?: ScenarioMult };
+  updatedAt: string;
+}
+export interface DecisionReport {
+  ideaId: string;
+  answers: { q: string; a: string; evidenceIds: string[] }[];
+  unsupportedCitations: string[];
+  generatedAt: string; mode: "live" | "dev"; fingerprint: string;
+}
+export interface OSState {
+  evidence: EvidenceItem[];
+  research: ResearchTask[];
+  gates: Record<string, Partial<Record<GateKey, GateAssessment>>>;   // ideaId → gate → assessment
+  approvals: ApprovalRecord[];
+  businessCases: BusinessCase[];
+  reports: DecisionReport[];
+}
+
+// AI outputs
+export const GatesSchema = z.object({
+  assessments: z.array(z.object({
+    ideaId: z.string().max(20), gate: z.enum(GATES), status: z.enum(["pass", "conditional", "fail"]),
+    note: z.string().max(300),
+  })).max(60),
+});
+export type GatesResult = z.infer<typeof GatesSchema>;
+export const DecisionReportSchema = z.object({
+  answers: z.array(z.object({ q: z.string().max(80), a: z.string().max(900), evidenceIds: z.array(z.string().max(30)).max(8) })).min(8).max(8),
+});
+export const ResearchGapsSchema = z.object({
+  tasks: z.array(z.object({ question: z.string().max(200), why: z.string().max(300), method: z.string().max(200), targetKind: z.enum(["problem", "concept", "assumption"]), targetId: z.string().max(40) })).min(1).max(8),
+});
+export const FinAssumptionsSchema = z.object({
+  unitLabel: z.string().max(40),
+  drivers: z.array(z.object({ key: z.enum(FIN_DRIVERS), value: z.number(), rationale: z.string().max(240) })).min(4).max(9),
+  caveat: z.string().max(400),
+});

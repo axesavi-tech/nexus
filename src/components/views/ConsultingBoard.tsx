@@ -1,16 +1,17 @@
 "use client";
 import { useMemo, useState } from "react";
 import { useNexus } from "@/lib/store";
-import { DIMENSIONS, type DecisionRecord, type DimensionScore } from "@/lib/schemas";
+import { DIMENSIONS, type DimensionScore } from "@/lib/schemas";
 import { DEFAULT_WEIGHTS, normalizeWeights, paretoFrontier, scoreIdeas, weightSensitivity } from "@/lib/scoring";
 import { makeNode, nid, now, placeNew } from "@/lib/graph";
 import { Empty, Section } from "../ui";
 import type { ViewId } from "../Workspace";
+import { DecisionCockpit } from "./DecisionCockpit";
 
 const label = (k: string) => DIMENSIONS.find((d) => d.key === k)?.label ?? k.replace(/^custom:/, "");
 
 export function ConsultingBoard({ go }: { go: (v: ViewId) => void }) {
-  const { p, set, setQuiet, checkpoint, evaluate, decide, busy, select } = useNexus();
+  const { p, set, setQuiet, checkpoint, evaluate, busy, select } = useNexus();
   const [open, setOpen] = useState<string | null>(null);
   const [newCrit, setNewCrit] = useState("");
   const ideas = useMemo(() => p?.ideas?.ideas ?? [], [p?.ideas]);
@@ -18,8 +19,6 @@ export function ConsultingBoard({ go }: { go: (v: ViewId) => void }) {
   const rows = useMemo(() => (p && ev ? scoreIdeas(ideas, ev, p.weights) : []), [p, ev, ideas]);
   const sens = useMemo(() => (p && ev ? weightSensitivity(ideas, ev, p.weights) : []), [p, ev, ideas]);
   const pareto = useMemo(() => paretoFrontier(rows), [rows]);
-  const leader = rows[0];
-  const [dec, setDec] = useState<Partial<DecisionRecord> & { ideaId?: string }>({});
 
   if (!p) return null;
   if (!p.ideas) return <Empty title="Nothing to compare yet" body="Generate options in the Idea Lab first, then bring them here to evaluate, challenge and decide." action={<button className="btn btn-primary" onClick={() => go("ideas")}>Go to Idea Lab</button>} />;
@@ -39,15 +38,16 @@ export function ConsultingBoard({ go }: { go: (v: ViewId) => void }) {
       },
     }), "score.overridden");
   };
-  const chosen = ideas.find((i) => i.id === (dec.ideaId ?? p.selectedIdeaId ?? leader?.ideaId));
   const assumptionNodes = p.nodes.filter((n) => n.type === "assumption");
 
   return (
     <div className="h-full overflow-auto scroll-thin">
       <div className="max-w-6xl mx-auto px-8 py-10 fade-in">
-        <div className="label mb-1">Consulting Board</div>
-        <h1 className="serif text-3xl mb-1">What really matters?</h1>
-        <p className="text-ink2 mb-8 max-w-2xl">Scores are judgements with stated evidence, not measurements. Adjust the weights, override any score, add your own criteria — and remember the top score informs the decision; it does not make it.</p>
+        <div className="label mb-1">Decision Intelligence</div>
+        <h1 className="serif text-3xl mb-1">Is this idea worth pursuing — and can you prove it?</h1>
+        <p className="text-ink2 mb-8 max-w-3xl">Attractiveness (weighted scores) and evidence confidence are kept apart. Mandatory risk gates can block any concept. The engine recommends; a named person decides — and the decision is flagged if its inputs change later.</p>
+        <DecisionCockpit go={go} />
+        <div className="label mt-4 mb-4 pt-6 border-t border-line">Scoring detail — weights, matrix, sensitivity, assumptions</div>
 
         <Section title="Weighted ranking" right={<button className="btn" disabled={!!busy} onClick={evaluate}>Re-evaluate</button>}>
           <div className="grid md:grid-cols-[1fr_320px] gap-6">
@@ -165,33 +165,6 @@ export function ConsultingBoard({ go }: { go: (v: ViewId) => void }) {
           <p className="text-xs text-ink3 mt-2">Mark an assumption <b>invalidated</b> and its downstream branch on the canvas shows the change; revisit the decision below if it mattered.</p>
         </Section>
 
-        <Section title="Decision room" kicker="You decide — NEXUS records why">
-          <div className="card p-5 grid md:grid-cols-2 gap-4">
-            <label className="text-sm">Decision question<input className="input mt-1" value={dec.question ?? `Which direction should we pursue for “${p.title}”?`} onChange={(e) => setDec({ ...dec, question: e.target.value })} /></label>
-            <label className="text-sm">Chosen option
-              <select className="input mt-1" value={chosen?.id ?? ""} onChange={(e) => setDec({ ...dec, ideaId: e.target.value })}>
-                {ideas.map((i) => { const r = rows.find((x) => x.ideaId === i.id); return <option key={i.id} value={i.id}>{i.title} — {r?.weighted ?? "unscored"}{r?.rank === 1 ? " (top score)" : ""}</option>; })}
-              </select>
-            </label>
-            <label className="text-sm md:col-span-2">Rationale — why this option, in your words<textarea className="input mt-1" rows={3} value={dec.rationale ?? ""} onChange={(e) => setDec({ ...dec, rationale: e.target.value })} placeholder={chosen && leader && chosen.id !== leader.ideaId ? "You're choosing an option that didn't score highest — explain what the scores miss." : "What makes this the right call now?"} /></label>
-            <label className="text-sm">Key risks & uncertainties accepted<input className="input mt-1" value={dec.risks ?? chosen?.risks.join("; ") ?? ""} onChange={(e) => setDec({ ...dec, risks: e.target.value })} /></label>
-            <label className="text-sm">Reconsider if…<input className="input mt-1" value={dec.reconsiderIf ?? ""} onChange={(e) => setDec({ ...dec, reconsiderIf: e.target.value })} placeholder="e.g. pilot engagement below 40%" /></label>
-            <label className="text-sm">Decision-maker<input className="input mt-1" value={dec.decisionMaker ?? ""} onChange={(e) => setDec({ ...dec, decisionMaker: e.target.value })} placeholder="Your name or role" /></label>
-            <div className="flex items-end justify-end gap-2">
-              {p.decision && <span className="text-xs text-ink3 mr-auto">Current: {p.decision.chosenOption} ({p.decision.date})</span>}
-              <button className="btn btn-primary" disabled={!chosen || !(dec.rationale ?? "").trim() || !(dec.decisionMaker ?? "").trim()} onClick={() => {
-                if (!chosen) return;
-                decide({
-                  question: dec.question ?? `Which direction should we pursue for “${p.title}”?`,
-                  optionsConsidered: ideas.map((i) => i.title), criteria: p.weights, chosenOption: chosen.title,
-                  rationale: dec.rationale!, decisionMaker: dec.decisionMaker!, date: new Date().toISOString().slice(0, 10),
-                  reconsiderIf: dec.reconsiderIf ?? "", risks: dec.risks ?? chosen.risks.join("; "),
-                }, chosen.id);
-                go("solution");
-              }}>Record decision →</button>
-            </div>
-          </div>
-        </Section>
       </div>
     </div>
   );

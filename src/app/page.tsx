@@ -61,8 +61,9 @@ function Home() {
       </header>
 
       <section className="max-w-3xl mx-auto px-6 pt-14 pb-10 text-center fade-in">
-        <div className="label mb-4">Thought Room</div>
-        <h1 className="serif text-5xl md:text-6xl mb-8">What&rsquo;s on your mind?</h1>
+        <div className="label mb-4">Idea → Outcome OS</div>
+        <h1 className="serif text-5xl md:text-6xl mb-4">Is this idea worth pursuing?</h1>
+        <p className="text-ink2 mb-8 max-w-xl mx-auto">From a thought to a defensible investment decision. From an approved idea to an executable delivery plan — with the evidence to prove it.</p>
         <div className="card p-3 text-left shadow-2xl shadow-black/30">
           <textarea
             ref={ta}
@@ -91,11 +92,11 @@ function Home() {
       </section>
 
       <section className="max-w-5xl mx-auto px-6 pb-10">
-        <div className="label mb-3">Sample projects — try one of the five reference scenarios</div>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <div className="label mb-3">Reference scenarios — the AI analyses them live; no customer research or market data is pre-filled</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {SAMPLES.map((s) => (
             <button key={s.id} disabled={busy} onClick={() => start(s.thought, s.mode)} className="card p-4 text-left hover:border-line2 transition group">
-              <div className="text-[11px] text-accent mb-2">Sample {s.id} · {s.label}</div>
+              <div className="text-[11px] text-accent mb-2">{s.id === "R" ? s.label : `Sample ${s.id} · ${s.label}`}</div>
               <div className="serif text-[15px] leading-snug text-ink2 group-hover:text-ink">“{s.thought}”</div>
             </button>
           ))}

@@ -41,7 +41,7 @@ export function IntelligencePanel({ node, go, onAddChild }: { node: NNode | null
         <div className="label mb-2">Composition</div>
         <div className="flex flex-wrap gap-1.5">{counts.map(([t, c]) => <span key={t} className="chip"><TypeBadge type={t} /> {c}</span>)}</div>
         <div className="mt-6 space-y-2">
-          <button className="btn w-full justify-center" onClick={() => go("design")}>Open Design Studio →</button>
+          <button className="btn w-full justify-center" onClick={() => go("design")}>Open Ideation Studio →</button>
           <button className="btn w-full justify-center" onClick={() => go("ideas")}>Open Idea Lab →</button>
           {p.ideas && <button className="btn w-full justify-center" onClick={() => go("board")}>Compare options →</button>}
         </div>

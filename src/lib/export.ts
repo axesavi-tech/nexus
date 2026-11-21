@@ -2,6 +2,10 @@ import type { ProjectState } from "./schemas";
 import { DIMENSIONS } from "./schemas";
 import { scoreIdeas } from "./scoring";
 import { byId } from "./frameworks";
+import { recommendAll, STATUS_LABEL, GATE_LABEL } from "./decision";
+import { scenarioTable, fmtMoney, FORMULAS } from "./finance";
+import { TYPE_LABEL, problemConfidence } from "./evidence";
+import { GATES } from "./schemas";
 
 const CLAIM_LABEL: Record<string, string> = {
   user_fact: "User-provided", verified_external: "Verified", research_interpretation: "Research interpretation",
@@ -9,7 +13,7 @@ const CLAIM_LABEL: Record<string, string> = {
 };
 export const claimLabel = (c?: string) => (c ? CLAIM_LABEL[c] ?? c : "—");
 
-export function toMarkdown(p: ProjectState, sections: ("thought" | "design" | "ideas" | "evaluation" | "decision" | "blueprint" | "roadmap" | "map")[] = ["thought", "design", "ideas", "evaluation", "decision", "blueprint", "roadmap", "map"]): string {
+export function toMarkdown(p: ProjectState, sections: ("thought" | "design" | "evidence" | "intelligence" | "ideas" | "evaluation" | "decision" | "blueprint" | "roadmap" | "map")[] = ["thought", "design", "ideas", "evidence", "intelligence", "evaluation", "decision", "blueprint", "roadmap", "map"]): string {
   const L: string[] = [];
   const I = p.interpretation;
   L.push(`# ${p.title}`, "", `> ${p.thought}`, "", `_Exported from NEXUS on ${new Date().toISOString().slice(0, 10)}. AI mode: ${p.aiMode === "dev" ? "development templates (not AI analysis)" : "live AI"}. Items marked as inference, assumption or forecast are not verified facts._`, "");
@@ -57,6 +61,31 @@ export function toMarkdown(p: ProjectState, sections: ("thought" | "design" | "i
     L.push("## Evaluation", "", "Weights: " + DIMENSIONS.map((d) => `${d.label} ${p.weights[d.key] ?? 0}`).join(", "), "", "| Rank | Option | Weighted score | Coverage | Status |", "|---|---|---|---|---|");
     for (const r of rows) L.push(`| ${r.rank || "–"} | ${r.title} | ${r.weighted ?? "unscored"} | ${Math.round(r.coverage * 100)}% | ${r.provisional ? "Provisional" : "Scored"} |`);
     L.push("", `_${p.evaluation.caveats}_`, "", "The highest score is an input to the decision, not the decision itself.", "");
+  }
+  const O = p.os;
+  if (sections.includes("evidence") && O && (O.evidence.length || O.research.length)) {
+    const pc = problemConfidence(p);
+    L.push("## Evidence register", "", `Problem confidence: **${pc.score}/100 (${pc.label})** from ${pc.supporting} supporting and ${pc.contradicting} contradicting independent source(s).`, "",
+      "| ID | Evidence | Type | Origin | Reliability | Verification | Retrieved | Links |", "|---|---|---|---|---|---|---|---|",
+      ...O.evidence.map((e) => `| ${e.id} | ${e.title}${e.url ? ` ([source](${e.url}))` : ""} | ${TYPE_LABEL[e.type]} | ${e.origin} | ${e.reliability} | ${e.verification} | ${e.retrievedAt} | ${e.links.map((l) => `${l.stance} ${l.targetKind}:${l.targetId}`).join("; ")} |`), "");
+    if (O.research.length) L.push("### Research tasks", ...O.research.map((t) => `- [${t.status === "done" ? "x" : " "}] ${t.question} — _${t.method}_`), "");
+  }
+  if (sections.includes("intelligence") && O && p.ideas) {
+    L.push("## Decision intelligence", "", "| Concept | Recommendation | Attractiveness | Evidence confidence | Gates | Base NPV |", "|---|---|---|---|---|---|",
+      ...recommendAll(p).map((r) => `| ${r.title} | ${STATUS_LABEL[r.status]} | ${r.attractiveness ?? "—"} | ${r.evidence.score} (${r.evidence.label}) | ${r.gates.failed.length ? `FAILED: ${r.gates.failed.map((g) => GATE_LABEL[g]).join(", ")}` : `${GATES.length - r.gates.unassessed.length - r.gates.unconfirmed.length}/${GATES.length} cleared`} | ${r.npv === null ? "—" : Math.round(r.npv).toLocaleString()} |`), "");
+    for (const rep of O.reports) {
+      const idea = p.ideas.ideas.find((i) => i.id === rep.ideaId);
+      L.push(`### Decision report — ${idea?.title ?? rep.ideaId} _(${rep.mode === "dev" ? "dev templates" : "AI synthesis"}, ${rep.generatedAt.slice(0, 10)})_`, "", ...rep.answers.flatMap((a) => [`**${a.q}** ${a.a} ${a.evidenceIds.length ? `[${a.evidenceIds.join(", ")}]` : "_(no registered evidence)_"}`, ""]));
+    }
+    for (const bc of O.businessCases) {
+      const idea = p.ideas.ideas.find((i) => i.id === bc.ideaId);
+      L.push(`### Business case — ${idea?.title ?? bc.ideaId}`, "", `Currency ${bc.inputs.currency}, ${bc.inputs.horizonYears}-year horizon, ${bc.inputs.discountRate}% discount rate. Assumptions marked AI/dev are placeholders, not forecasts.`, "",
+        ...Object.entries(bc.inputs).filter(([k]) => !["currency", "horizonYears", "discountRate", "unitLabel"].includes(k)).map(([k, v]) => `- ${k}: ${v} _(${bc.sources[k as keyof typeof bc.sources]?.by ?? "default"})_`), "",
+        "| Scenario | NPV | IRR | Payback (yrs) | ROI |", "|---|---|---|---|---|",
+        ...scenarioTable(bc).map((s) => `| ${s.key} | ${fmtMoney(s.npv, bc.inputs.currency)} | ${s.irr === null ? "—" : s.irr.toFixed(1) + "%"} | ${s.paybackYears?.toFixed(1) ?? "—"} | ${s.roi === null ? "—" : Math.round(s.roi * 100) + "%"} |`), "",
+        "Formulas: " + FORMULAS.map((f) => `${f.name} = ${f.formula}`).join("; "), "");
+    }
+    if (O.approvals.length) L.push("### Decision history", ...O.approvals.map((a) => `- ${a.at.slice(0, 16).replace("T", " ")} — **${a.action}** “${p.ideas!.ideas.find((i) => i.id === a.ideaId)?.title ?? a.ideaId}” by ${a.by} (engine recommended ${STATUS_LABEL[a.recommended]})${a.note ? `: ${a.note}` : ""}`), "");
   }
   if (sections.includes("decision") && p.decision) {
     const d = p.decision;
