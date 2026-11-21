@@ -7,6 +7,7 @@ import { supabaseBrowser } from "@/lib/supabase";
 import { emptyGuide, useNexus } from "@/lib/store";
 import { COUNTRIES, countryByCode } from "@/lib/countries";
 import { STAGES } from "@/components/journey/Journey";
+import { lockAndSignOut } from "@/components/VaultGate";
 import type { GuideState } from "@/lib/schemas";
 
 const EXAMPLES = [
@@ -59,7 +60,10 @@ function Home() {
         <div className="flex items-center gap-3"><span className="text-accent text-xl">◉</span><span className="tracking-[.3em] text-sm font-semibold">NEXUS</span></div>
         <div className="flex items-center gap-3 text-xs text-ink3">
           {status?.mode === "dev" && <span className="chip !border-warn !text-warn">Offline templates — AI not connected</span>}
-          {supabaseBrowser() && <button className="btn btn-ghost" onClick={() => supabaseBrowser()!.auth.signOut()}>Sign out</button>}
+          <a className="btn btn-ghost" href="/pricing">Pricing</a>
+          <a className="btn btn-ghost" href="/directory">Find professionals</a>
+          {supabaseBrowser() && <span className="chip" title="Your ideas are encrypted in your browser; only your vault passphrase can open them">🔒 Encrypted</span>}
+          {supabaseBrowser() && <button className="btn btn-ghost" onClick={lockAndSignOut}>Lock & sign out</button>}
         </div>
       </header>
 

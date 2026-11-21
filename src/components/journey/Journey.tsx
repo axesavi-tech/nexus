@@ -11,6 +11,9 @@ import { FIN_DRIVERS, type FinDriver, type GuideState, type ProjectState, type T
 import { DRIVER_META, fmtMoney, metrics, scenarioTable, validateInputs } from "@/lib/finance";
 import { download, toMarkdown } from "@/lib/export";
 import { Spinner } from "../ui";
+import { PAYWALL_MESSAGE } from "@/lib/billing";
+import { SERVICES_FOR_STEP, livePros, type Pro } from "@/lib/directory";
+import { ProCard } from "../site/ProCard";
 
 // ------------------------------------------------------------------ steps
 const STEPS = [
@@ -105,6 +108,7 @@ export function Journey({ id }: { id: string }) {
           onChange={(e) => useNexus.getState().setQuiet((c) => ({ ...c, title: e.target.value }))} />
         {p.aiMode === "dev" && <span className="chip !border-warn !text-warn" title="No AI key configured">Offline templates</span>}
         <span className="text-xs text-ink3 w-16 text-right" aria-live="polite">{saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "⚠ Not saved" : ""}</span>
+        <span className="text-xs text-ink3 hidden sm:inline" title="Encrypted in your browser — only your vault passphrase can open it">🔒</span>
         <Link href={`/p/${p.id}/workspace`} className="btn btn-ghost text-xs" title="Detailed analysis: evidence, scoring, gates and full models">Advanced</Link>
         <button className="btn btn-ghost !px-2" onClick={toggleTheme} aria-label="Toggle theme">{theme === "dark" ? "☀" : "☾"}</button>
       </header>
@@ -132,7 +136,13 @@ export function Journey({ id }: { id: string }) {
               <div className="h-9 w-9 shrink-0 rounded-full grid place-items-center bg-accent text-white text-sm" aria-hidden>◉</div>
               <div className="card px-4 py-3 text-[15px] leading-relaxed flex-1">{busy ? <Spinner label={busy} /> : guideSays(p, step)}</div>
             </div>
-            {error && <div className="card p-3 mb-6 !border-danger text-sm flex gap-3" role="alert"><span className="flex-1 text-danger">{error}</span><button onClick={clearError} aria-label="Dismiss">✕</button></div>}
+            {error && (error === PAYWALL_MESSAGE ? (
+              <div className="card p-5 mb-6 !border-accent" role="alert">
+                <div className="serif text-xl mb-1">Unlock the full plan for this idea</div>
+                <p className="text-sm text-ink2 mb-3">The free taster covers understanding your idea, your customers and the ways to do it. Cheap tests, the numbers, company setup for your country and the delivery plan need a Plan Pass ({"₹999"}) or a subscription. If you already have one, try again — an idea is unlocked automatically.</p>
+                <div className="flex gap-2"><Link className="btn btn-primary" href="/pricing">See plans</Link><button className="btn" onClick={clearError}>Not now</button></div>
+              </div>
+            ) : <div className="card p-3 mb-6 !border-danger text-sm flex gap-3" role="alert"><span className="flex-1 text-danger">{error}</span><button onClick={clearError} aria-label="Dismiss">✕</button></div>)}
             {step === "idea" && <IdeaStep p={p} next={() => go("understand")} />}
             {step === "understand" && <UnderstandStep p={p} />}
             {step === "customers" && <CustomersStep p={p} />}
@@ -418,6 +428,9 @@ function NumbersStep({ p }: { p: ProjectState }) {
 function SetupStep({ p }: { p: ProjectState }) {
   const { guide, setupGuide, checkLinks, busy } = useNexus();
   const g = p.guide ?? emptyGuide();
+  const [pros, setPros] = useState<Pro[]>([]);
+  useEffect(() => { livePros(g.country).then((r) => setPros(r.pros)).catch(() => setPros([])); }, [g.country]);
+  const sponsoredFor = (cat: keyof typeof SERVICES_FOR_STEP) => pros.filter((x) => x.tier === "premium" && x.services.some((sv) => SERVICES_FOR_STEP[cat].includes(sv))).slice(0, 2);
   const G = g.setup;
   const country = countryByCode(g.country);
   const mandatory = G?.steps.filter((s) => s.mandatory) ?? [];
@@ -456,6 +469,12 @@ function SetupStep({ p }: { p: ProjectState }) {
           {CATEGORY_ORDER.filter((c) => G.steps.some((s) => s.category === c)).map((cat) => (
             <section key={cat} className="mb-6">
               <h2 className="serif text-2xl mt-6 mb-3">{CATEGORY_LABEL[cat]}</h2>
+              {sponsoredFor(cat).length > 0 && (
+                <div className="mb-3">
+                  <div className="text-xs text-ink3 mb-1">Professionals who can help with this <span className="chip !text-[10px] !py-0 ml-1">Sponsored</span></div>
+                  <div className="grid sm:grid-cols-2 gap-2">{sponsoredFor(cat).map((x) => <ProCard key={x.id} pro={x} compact sponsored />)}</div>
+                </div>
+              )}
               {G.steps.filter((s) => s.category === cat).map((s) => (
                 <article key={s.id} className={`card p-4 mb-3 ${g.setupDone[s.id] ? "opacity-60" : ""}`}>
                   <label className="flex gap-3 items-start cursor-pointer">
@@ -504,6 +523,10 @@ function SetupStep({ p }: { p: ProjectState }) {
               <ul className="mt-2 space-y-1 text-sm">{G.sources.map((s) => <li key={s.url}><a className="underline" href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a> <span className="text-ink3 text-xs">{new URL(s.url).hostname}</span></li>)}</ul>
             </details>
           )}
+          <div className="card p-4 mb-4 flex flex-wrap items-center gap-3">
+            <div className="flex-1 min-w-[200px] text-sm"><b>Want someone to do this for you?</b> <span className="text-ink2">Find chartered accountants, company secretaries and lawyers in {country?.name}{pros.length ? ` — ${pros.length} listed` : ""}.</span></div>
+            <a className="btn" href={`/directory?country=${g.country}`} target="_blank" rel="noopener">Find professionals</a>
+          </div>
           <p className="text-xs text-ink3 leading-relaxed">{G.caveats} This is general guidance, not legal, tax or financial advice. Rules, fees and thresholds change — confirm with the official authority or a qualified local professional before acting.</p>
         </>
       )}

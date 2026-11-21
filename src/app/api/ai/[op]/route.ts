@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { OPS, runOp, type OpName } from "@/lib/ai/gateway";
 import { hasSupabase, supabaseAsUser } from "@/lib/supabase";
+import { FREE_OPS, PAYWALL_MESSAGE } from "@/lib/billing";
+import { billingEnforced, razorpayConfigured } from "@/lib/server/razorpay";
 
 export const runtime = "nodejs";
 // Blueprint and roadmap generation can take well over a minute (up to 7k output tokens, plus one
@@ -42,6 +44,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ op: string }> 
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const projectId = (body as { projectId?: string })?.projectId ?? null;
 
+  // Paywall: beyond the free taster, an idea must be unlocked (spending one credit, atomically, in the database).
+  if (sb && billingEnforced() && !FREE_OPS.has(op)) {
+    if (!projectId) return NextResponse.json({ error: PAYWALL_MESSAGE, code: "payment_required" }, { status: 402 });
+    const { data: unlocked } = await sb.from("project_unlocks").select("project_id").eq("project_id", projectId).maybeSingle();
+    if (!unlocked) {
+      const { data: res, error } = await sb.rpc("unlock_project", { p_project: projectId });
+      if (error || !res?.ok) return NextResponse.json({ error: PAYWALL_MESSAGE, code: "payment_required" }, { status: 402 });
+    }
+  }
+
   try {
     const out = await runOp(op as OpName, (body as { input?: unknown })?.input);
     if (sb) await sb.from("ai_runs").insert({ owner_id: userId, project_id: projectId, operation: op, model: out.model, input_tokens: out.tokens?.input ?? null, output_tokens: out.tokens?.output ?? null, ok: true });
@@ -54,5 +66,5 @@ export async function POST(req: Request, ctx: { params: Promise<{ op: string }> 
 }
 
 export async function GET() {
-  return NextResponse.json({ mode: process.env.ANTHROPIC_API_KEY ? "live" : "dev", model: process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5", persistence: hasSupabase() ? "supabase" : "local" });
+  return NextResponse.json({ mode: process.env.ANTHROPIC_API_KEY ? "live" : "dev", model: process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5", persistence: hasSupabase() ? "supabase" : "local", payments: razorpayConfigured(), paywall: billingEnforced() });
 }
