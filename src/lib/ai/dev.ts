@@ -5,7 +5,7 @@
  */
 import type {
   Blueprint, Category, ClusterResult, Empathy, EvaluationResult, Idea, IdeasResult, Interpretation, Mode, NodeAction, NodePatch, NodeType,
-  Roadmap, Sliders, SparksResult, Technique, TestPlan, ClaimType,
+  Roadmap, Sliders, SparksResult, Technique, TestPlan, ClaimType, GatesResult, FinDriver,
 } from "../schemas";
 import { DIMENSIONS } from "../schemas";
 import { byId } from "../frameworks";
@@ -377,4 +377,52 @@ export function testplan(idea: Partial<Idea>): TestPlan {
       { frame: "The new normal", caption: "It becomes part of their routine and they tell a friend." },
     ],
   };
+}
+
+// ---------------- Idea → Outcome OS ----------------
+export function gates(ideas: { id: string; title?: string }[]): GatesResult {
+  const keys = ["legal", "regulatory", "security", "privacy", "safety", "ethical"] as const;
+  return {
+    assessments: ideas.slice(0, 8).flatMap((i) => keys.map((g) => ({
+      ideaId: i.id, gate: g,
+      status: (g === "privacy" ? "conditional" : "pass") as "pass" | "conditional",
+      note: g === "privacy" ? "Dev template: any customer data collected needs consent and a retention rule." : `Dev template: no ${g} exposure identified by keyword rules — a human must assess this properly.`,
+    }))),
+  };
+}
+export function decisionReport(questions: string[], idea: { title?: string } | null, rec: { status?: string; reasons?: string[] } | null, evidenceIds: string[]) {
+  const t = idea?.title ?? "this concept";
+  return {
+    answers: questions.map((q, n) => ({
+      q,
+      a: n === 0 ? `Dev template: “${t}” is currently recommended as ${rec?.status ?? "—"}. ${(rec?.reasons ?? []).join(" ")}`
+        : n === 4 ? (evidenceIds.length ? `Dev template: ${evidenceIds.length} registered evidence item(s) are linked.` : "No registered evidence yet — the case rests on assumptions.")
+        : `Dev template answer to “${q}”. Connect an AI key for a real synthesis.`,
+      evidenceIds: n === 4 ? evidenceIds.slice(0, 4) : [],
+    })),
+  };
+}
+export function researchGaps(targets: { kind: "problem" | "concept" | "assumption"; id: string; statement: string; confidence: number }[]) {
+  return {
+    tasks: [...targets].sort((a, b) => a.confidence - b.confidence).slice(0, 4).map((t) => ({
+      question: clip(`Is it true that ${t.statement.replace(/\.$/, "")}?`, 200),
+      why: `Evidence confidence is ${t.confidence}/100 and the decision depends on it.`,
+      method: t.kind === "problem" ? "Interview 5 affected people about the last time this happened" : t.kind === "concept" ? "Show a storyboard to 5 target users; measure intent" : "Find one data point or run one cheap test",
+      targetKind: t.kind, targetId: t.id,
+    })),
+  };
+}
+export function finAssumptions(idea: { title?: string } | null) {
+  const d: [FinDriver, number, string][] = [
+    ["volumeY1", 1200, "Dev placeholder — replace with your current order volume or a pilot result."],
+    ["volumeGrowth", 30, "Dev placeholder growth rate."],
+    ["price", 8500, "Dev placeholder average order value."],
+    ["priceGrowth", 3, "Dev placeholder."],
+    ["variableCostPct", 55, "Dev placeholder for product, shipping and payment costs."],
+    ["fixedOpex", 1800000, "Dev placeholder for team and tools."],
+    ["opexGrowth", 8, "Dev placeholder."],
+    ["capex", 1500000, "Dev placeholder build cost."],
+    ["savingsPerYear", 0, "Not an efficiency concept."],
+  ];
+  return { unitLabel: "orders", drivers: d.map(([key, value, rationale]) => ({ key, value, rationale })), caveat: `Dev templates for “${clip(idea?.title ?? "concept", 60)}” — every number is a placeholder, not an estimate.` };
 }

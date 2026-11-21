@@ -10,6 +10,7 @@ import { SYSTEM, ACTION_GUIDE } from "./prompts";
 import {
   InterpretationSchema, NodePatchSchema, IdeasSchema, EvaluationSchema, BlueprintSchema, RoadmapSchema,
   EmpathySchema, SparksSchema, ClusterSchema, TestPlanSchema,
+  GatesSchema, DecisionReportSchema, ResearchGapsSchema, FinAssumptionsSchema, GATES,
   DIMENSIONS, NODE_ACTIONS, TECHNIQUES, type NodeAction, type Sliders,
 } from "../schemas";
 import { techniqueById, HMW_ANGLE_LABEL } from "../design";
@@ -107,6 +108,17 @@ const SparkIn = z.object({
 });
 const ClusterIn = z.object({ hmw: z.string().max(400).optional(), sparks: z.array(z.object({ id: z.string(), title: z.string(), description: z.string() })).min(3).max(60) });
 const TestPlanIn = z.object({ thought: z.string().max(8000), idea: z.any(), personas: z.array(z.any()).max(3).optional() });
+const GatesIn = z.object({ thought: z.string().max(8000), ideas: z.array(z.any()).min(1).max(8), context: z.string().max(2000).optional() });
+const ReportIn = z.object({
+  thought: z.string().max(8000), idea: z.any(), recommendation: z.any(), alternatives: z.array(z.any()).max(8),
+  evidence: z.array(z.object({ id: z.string(), title: z.string(), type: z.string(), stance: z.string(), excerpt: z.string(), origin: z.string() })).max(60),
+  assumptions: z.array(z.string()).max(20), businessCase: z.any().optional(), questions: z.array(z.string()).length(8),
+});
+const GapsIn = z.object({
+  thought: z.string().max(8000), interpretation: z.any().optional(),
+  targets: z.array(z.object({ kind: z.enum(["problem", "concept", "assumption"]), id: z.string(), statement: z.string(), confidence: z.number() })).min(1).max(30),
+});
+const FinIn = z.object({ thought: z.string().max(8000), idea: z.any(), currency: z.string().max(8), notes: z.string().max(2000).optional() });
 const PROTOTYPES_TXT = "paper_sketch, storyboard, clickable_mockup, wizard_of_oz (fake the automation manually), concierge (deliver the service by hand), fake_door (measure clicks on an offer that doesn't exist yet), landing_page, role_play, physical_mockup, pilot";
 
 function sliderText(s: Record<string, number>) {
@@ -246,6 +258,44 @@ Thought: ${wrap("thought", i.thought)}
 Concept: ${wrap("concept", i.idea)}
 ${i.personas?.length ? `Personas: ${wrap("personas", i.personas)}` : ""}`,
     dev: (i: z.infer<typeof TestPlanIn>) => dev.testplan(i.idea),
+  },
+  gates: {
+    input: GatesIn, output: GatesSchema, tokens: 5000,
+    prompt: (i: z.infer<typeof GatesIn>) => `Risk agent — mandatory risk & policy gates. For EACH concept and EACH gate (${GATES.join(", ")}), give a preliminary assessment: pass (no material exposure you can identify), conditional (exposure that can be managed — say the condition), or fail (unacceptable exposure as currently designed — say why). Be specific to the concept and its likely jurisdiction; do not give legal advice or claim certainty — these are preliminary screens a human must confirm. Never mark something pass just because it is commercially attractive. Notes ≤ 2 sentences.
+Thought: ${wrap("thought", i.thought)}
+${i.context ? `Context: ${wrap("context", i.context)}` : ""}
+Concepts (use their ids): ${wrap("concepts", i.ideas)}`,
+    dev: (i: z.infer<typeof GatesIn>) => dev.gates(i.ideas),
+  },
+  decision_report: {
+    input: ReportIn, output: DecisionReportSchema, tokens: 5000,
+    prompt: (i: z.infer<typeof ReportIn>) => `Decision synthesis agent. Write an explainable decision report for the concept below. The platform's deterministic engine has ALREADY produced the recommendation, scores, evidence confidence, gate status and financials — explain them; do not recompute or contradict the numbers.
+Answer exactly these 8 questions in order (q = the question text verbatim): ${i.questions.map((q, n) => `${n + 1}. ${q}`).join(" ")}
+Rules: 2–5 plain sentences per answer. In evidenceIds cite ONLY ids from the evidence register provided; if an answer rests on no registered evidence, leave evidenceIds empty and say plainly that it is an assumption or AI inference. Never invent sources, numbers, interviews or results. Where evidence is weak, say what would strengthen it. Be candid about weaknesses — the report must help a decision-maker, not sell the idea.
+Thought: ${wrap("thought", i.thought)}
+Concept: ${wrap("concept", i.idea)}
+Deterministic recommendation: ${wrap("recommendation", i.recommendation)}
+Alternatives considered: ${wrap("alternatives", i.alternatives)}
+Evidence register (id, type, stance): ${wrap("evidence", i.evidence)}
+Tracked assumptions: ${wrap("assumptions", i.assumptions)}
+${i.businessCase ? `Business case (computed by the platform): ${wrap("business_case", i.businessCase)}` : "No business case yet."}`,
+    dev: (i: z.infer<typeof ReportIn>) => dev.decisionReport(i.questions, i.idea, i.recommendation, i.evidence.map((e) => e.id)),
+  },
+  research_gaps: {
+    input: GapsIn, output: ResearchGapsSchema, tokens: 3000,
+    prompt: (i: z.infer<typeof GapsIn>) => `Research agent. You have no live web access in this call, so do NOT state findings. Instead, for the weakest-evidenced targets below, write 3–8 concrete research tasks: the question to answer, why it matters for the decision, and the cheapest credible method (who to ask, what to observe, which data to pull, which public source type to check). Prioritise targets with low confidence that the decision depends on. Use the given target kind and id.
+Thought: ${wrap("thought", i.thought)}
+Understanding: ${wrap("interpretation", i.interpretation ?? {})}
+Targets with current evidence confidence (0–100): ${wrap("targets", i.targets)}`,
+    dev: (i: z.infer<typeof GapsIn>) => dev.researchGaps(i.targets),
+  },
+  fin_assumptions: {
+    input: FinIn, output: FinAssumptionsSchema, tokens: 2500,
+    prompt: (i: z.infer<typeof FinIn>) => `Commercial agent. Suggest STARTING assumptions for a simple ${i.currency} business-case model of this concept. They are placeholders for the user to replace with real figures — keep them modest and say in each rationale what real data should replace it. Drivers (key: meaning): volumeY1: units/customers/transactions in year 1; volumeGrowth: % per year; price: average revenue per unit in ${i.currency}; priceGrowth: % per year; variableCostPct: % of revenue; fixedOpex: ${i.currency} per year; opexGrowth: % per year; capex: upfront ${i.currency}; savingsPerYear: ${i.currency} cost savings per year (only for efficiency/transformation concepts, else 0). Percentages as plain numbers (12 = 12%). Choose a unitLabel (e.g. orders, customers, cases). In caveat, state the biggest uncertainty. Do not compute NPV or any outputs.
+Thought: ${wrap("thought", i.thought)}
+Concept: ${wrap("concept", i.idea)}
+${i.notes ? `User notes: ${wrap("notes", i.notes)}` : ""}`,
+    dev: (i: z.infer<typeof FinIn>) => dev.finAssumptions(i.idea),
   },
 } as const;
 export type OpName = keyof typeof OPS;

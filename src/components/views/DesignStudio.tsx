@@ -19,10 +19,10 @@ const TABS: { id: Tab; n: number; name: string; q: string }[] = [
 ];
 const LENS_COLOR: Record<string, string> = { desirability: "var(--t-stakeholder)", feasibility: "var(--t-experiment)", viability: "var(--t-idea)" };
 
-export function DesignStudio({ go }: { go: (v: ViewId) => void }) {
+export function DesignStudio({ go, initial }: { go: (v: ViewId) => void; initial?: Tab }) {
   const { p } = useNexus();
   const phase = designPhase(p?.design ?? null, !!p?.ideas);
-  const [tab, setTab] = useState<Tab>(() => (["empathize", "define", "ideate", "test", "test"] as Tab[])[phase]);
+  const [tab, setTab] = useState<Tab>(() => initial ?? (["empathize", "define", "ideate", "test", "test"] as Tab[])[phase]);
   if (!p) return null;
   const d = p.design ?? emptyDesign();
   const done: Record<Tab, boolean> = {
@@ -34,7 +34,7 @@ export function DesignStudio({ go }: { go: (v: ViewId) => void }) {
       <div className="max-w-6xl mx-auto px-8 pt-8 pb-16 fade-in">
         <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
           <div>
-            <div className="label mb-1">Design Studio · human-centred design thinking</div>
+            <div className="label mb-1">{tab === "empathize" || tab === "define" ? "Problem Discovery" : tab === "ideate" ? "Ideation Studio" : "Validation Lab"} · human-centred design thinking</div>
             <h1 className="serif text-3xl">{TABS.find((t) => t.id === tab)!.q}</h1>
           </div>
           <nav className="card flex p-1 gap-1" role="tablist" aria-label="Design thinking phases">

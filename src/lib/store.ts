@@ -5,6 +5,10 @@ import type {
   NodePatch, ProjectState, Roadmap, SparksResult, Spark, Task, Technique, TestPlan, TestStatus,
 } from "./schemas";
 import { emptyDesign, isDuplicate, mergeHmws, techniqueById, topSparks } from "./design";
+import type { ApprovalRecord, BusinessCase, DecisionReport, FinDriver, GateKey, GateStatus, GatesResult, OSState, ResearchTask } from "./schemas";
+import { conceptConfidence, emptyOS, evidenceFor, itemWeight, problemConfidence, confidenceFrom } from "./evidence";
+import { REPORT_QUESTIONS, checkCitations, fingerprint, recommendAll } from "./decision";
+import { DEFAULT_INPUTS, SCENARIO_DEFAULTS, metrics, scenarioTable } from "./finance";
 import { applyPatch, contextFor, descendants, makeNode, nid, now, placeNew, radialLayout, sanitizeRoadmap, schedule } from "./graph";
 import { recommendFrameworks } from "./frameworks";
 import { callAI } from "./client";
@@ -56,6 +60,15 @@ interface S {
   planTests: (ideaId: string) => Promise<void>;
   recordTest: (ideaId: string, assumptionId: string, status: TestStatus, learning: string) => void;
   toMap: (item: { kind: "persona" | "hmw" | "spark" | "insight"; id: string }) => string | null;
+  // Idea → Outcome OS
+  os: (fn: (o: OSState) => OSState, label?: string) => void;
+  assessGates: () => Promise<void>;
+  setGate: (ideaId: string, gate: GateKey, status: GateStatus, note: string) => void;
+  confirmGates: (ideaId: string) => void;
+  decisionReport: (ideaId: string) => Promise<void>;
+  researchGaps: () => Promise<void>;
+  suggestFinancials: (ideaId: string, currency: string, notes?: string) => Promise<void>;
+  approve: (ideaId: string, action: ApprovalRecord["action"], by: string, note: string) => string | null;
 }
 
 const personaBrief = (e: Empathy | null | undefined) =>
@@ -448,6 +461,120 @@ export const useNexus = create<S>((set, get) => {
       const newEdges: NEdge[] = placed.filter((n) => n.parentId).map((n) => ({ id: nid(), source: n.parentId!, target: n.id, kind: "child" }));
       get().set((cur) => ({ ...cur, nodes: [...cur.nodes, ...placed], edges: [...cur.edges, ...newEdges] }), `design.to_map.${item.kind}`);
       return placed[0]?.id ?? null;
+    },
+
+    os: (fn, label) => get().set((cur) => ({ ...cur, os: fn(cur.os ?? emptyOS()) }), label),
+
+    assessGates: async () => {
+      const p = get().p!;
+      if (!p.ideas) return;
+      const ideas = p.ideas.ideas.map((i) => ({ id: i.id, title: i.title, summary: i.summary, howItWorks: i.howItWorks, targetUsers: i.targetUsers }));
+      await run("Risk agent: screening legal, regulatory, security, privacy, safety and ethics…", async () => {
+        const r = await callAI<GatesResult>("gates", { thought: p.thought, ideas, context: p.interpretation?.domain }, p.id);
+        const by = r.mode === "live" ? "ai" as const : "dev" as const;
+        get().os((o) => {
+          const gates = { ...o.gates };
+          for (const a of r.data.assessments) {
+            if (!ideas.some((i) => i.id === a.ideaId)) continue;
+            const cur = gates[a.ideaId]?.[a.gate];
+            if (cur?.confirmed && cur.by === "user") continue; // never overwrite a human assessment
+            gates[a.ideaId] = { ...gates[a.ideaId], [a.gate]: { status: a.status, note: a.note, by, confirmed: false, at: now() } };
+          }
+          return { ...o, gates };
+        }, "ai.gates");
+      });
+    },
+    setGate: (ideaId, gate, status, note) => get().os((o) => ({ ...o, gates: { ...o.gates, [ideaId]: { ...o.gates[ideaId], [gate]: { status, note, by: "user", confirmed: status !== "unassessed", at: now() } } } }), `gate.${gate}.${status}`),
+    confirmGates: (ideaId) => get().os((o) => ({ ...o, gates: { ...o.gates, [ideaId]: Object.fromEntries(Object.entries(o.gates[ideaId] ?? {}).map(([k, v]) => [k, v && v.status !== "unassessed" ? { ...v, confirmed: true } : v])) } }), "gates.confirmed"),
+
+    decisionReport: async (ideaId) => {
+      const p = get().p!;
+      const idea = p.ideas?.ideas.find((i) => i.id === ideaId);
+      if (!idea) return;
+      const rec = recommendAll(p).find((r) => r.ideaId === ideaId);
+      const ideaNode = p.nodes.find((n) => n.tags.includes(`idea:${ideaId}`));
+      const assumptionNodes = ideaNode ? p.nodes.filter((n) => n.type === "assumption" && n.parentId === ideaNode.id) : [];
+      const linked = (p.os?.evidence ?? []).flatMap((e) => e.links.filter((l) => (l.targetKind === "concept" && l.targetId === ideaId) || assumptionNodes.some((a) => a.id === l.targetId) || (l.targetKind === "problem")).map((l) => ({ id: e.id, title: e.title, type: e.type, stance: `${l.stance} ${l.targetKind}`, excerpt: e.excerpt.slice(0, 300), origin: e.origin })));
+      const bc = p.os?.businessCases.find((b) => b.ideaId === ideaId);
+      await run("Synthesising the decision report…", async () => {
+        const r = await callAI<{ answers: DecisionReport["answers"] }>("decision_report", {
+          thought: p.thought, idea, questions: REPORT_QUESTIONS,
+          recommendation: rec && { status: rec.status, reasons: rec.reasons, blockers: rec.blockers, attractiveness: rec.attractiveness, evidenceConfidence: rec.evidence.score, gates: rec.gates, npv: rec.npv },
+          alternatives: (p.ideas?.ideas ?? []).filter((i) => i.id !== ideaId).map((i) => { const x = recommendAll(p).find((y) => y.ideaId === i.id); return { title: i.title, status: x?.status, attractiveness: x?.attractiveness, evidence: x?.evidence.score }; }),
+          evidence: linked.slice(0, 60),
+          assumptions: [...idea.keyAssumptions, ...assumptionNodes.map((a) => `${a.title} (${a.status})`)].slice(0, 20),
+          businessCase: bc ? scenarioTable(bc).map((s) => ({ scenario: s.key, npv: Math.round(s.npv), irr: s.irr, payback: s.paybackYears, roi: s.roi })) : undefined,
+        }, p.id);
+        const { answers, unsupported } = checkCitations(r.data.answers, new Set((p.os?.evidence ?? []).map((e) => e.id)));
+        const report: DecisionReport = { ideaId, answers, unsupportedCitations: unsupported, generatedAt: now(), mode: r.mode, fingerprint: fingerprint(get().p!, ideaId) };
+        get().os((o) => ({ ...o, reports: [...o.reports.filter((x) => x.ideaId !== ideaId), report] }), "ai.decision_report");
+      });
+    },
+
+    researchGaps: async () => {
+      const p = get().p!;
+      const targets = [
+        { kind: "problem" as const, id: "root", statement: p.interpretation?.problemOrOpportunity ?? p.thought, confidence: problemConfidence(p).score },
+        ...(p.ideas?.ideas ?? []).map((i) => ({ kind: "concept" as const, id: i.id, statement: `${i.title}: ${i.valueProposition}`, confidence: conceptConfidence(p, i.id).score })),
+        ...p.nodes.filter((n) => n.type === "assumption" && n.status !== "validated").slice(0, 15).map((n) => ({
+          kind: "assumption" as const, id: n.id, statement: n.title,
+          confidence: confidenceFrom(evidenceFor(p.os, "assumption", n.id).map(({ e, stance }) => ({ w: itemWeight(e), stance, origin: e.origin }))).score,
+        })),
+      ].slice(0, 30);
+      await run("Research agent: finding the gaps that matter…", async () => {
+        const r = await callAI<{ tasks: Omit<ResearchTask, "id" | "status" | "source">[] }>("research_gaps", { thought: p.thought, interpretation: p.interpretation, targets }, p.id);
+        get().os((o) => ({ ...o, research: [...o.research.filter((t) => t.status === "done" || t.source === "user"), ...r.data.tasks.map((t) => ({ ...t, id: nid(), status: "open" as const, source: r.mode === "live" ? "ai" as const : "dev" as const }))] }), "ai.research_gaps");
+      });
+    },
+
+    suggestFinancials: async (ideaId, currency, notes) => {
+      const p = get().p!;
+      const idea = p.ideas?.ideas.find((i) => i.id === ideaId);
+      if (!idea) return;
+      await run("Commercial agent: drafting starting assumptions…", async () => {
+        const r = await callAI<{ unitLabel: string; drivers: { key: FinDriver; value: number; rationale: string }[]; caveat: string }>("fin_assumptions", { thought: p.thought, idea, currency, notes }, p.id);
+        const by = r.mode === "live" ? "ai" as const : "dev" as const;
+        get().os((o) => {
+          const existing = o.businessCases.find((b) => b.ideaId === ideaId);
+          const bc: BusinessCase = existing ?? { ideaId, inputs: { ...DEFAULT_INPUTS, currency }, sources: {}, scenarios: { ...SCENARIO_DEFAULTS }, updatedAt: now() };
+          const inputs = { ...bc.inputs, currency, unitLabel: r.data.unitLabel || bc.inputs.unitLabel };
+          const sources = { ...bc.sources };
+          for (const d of r.data.drivers) {
+            if (bc.sources[d.key]?.by === "user") continue; // keep the user's own numbers
+            inputs[d.key] = Number.isFinite(d.value) ? d.value : 0;
+            sources[d.key] = { by, rationale: d.rationale };
+          }
+          return { ...o, businessCases: [...o.businessCases.filter((b) => b.ideaId !== ideaId), { ...bc, inputs, sources, updatedAt: now() }] };
+        }, "ai.fin_assumptions");
+      });
+    },
+
+    approve: (ideaId, action, by, note) => {
+      const p = get().p!;
+      const rec = recommendAll(p).find((r) => r.ideaId === ideaId);
+      const idea = p.ideas?.ideas.find((i) => i.id === ideaId);
+      if (!rec || !idea) return "Concept not found.";
+      if (!by.trim()) return "Name the accountable decision-maker.";
+      let override = false;
+      if (action === "approve" && !rec.canApprove) {
+        // Mandatory gates are never overridable. Other recommendations can be overridden by an accountable human with a written justification.
+        if (rec.gates.failed.length || rec.gates.unassessed.length || rec.gates.unconfirmed.length) return `Approval blocked: every risk & policy gate must be assessed, confirmed by a person and not failed. ${rec.blockers.join(" ")}`;
+        if (note.trim().length < 20) return `The engine recommends “${rec.status.replace(/_/g, " ").toLowerCase()}”. To approve anyway, write a justification (at least 20 characters) — it is recorded as an override.`;
+        override = true;
+      }
+      const record: ApprovalRecord = { id: nid(), ideaId, action, by: by.trim(), note: (override ? "[OVERRIDE of engine recommendation] " : "") + note.trim(), at: now(), recommended: rec.status, fingerprint: fingerprint(p, ideaId) };
+      if (action === "approve") {
+        const bc = p.os?.businessCases.find((b) => b.ideaId === ideaId);
+        get().decide({
+          question: `Should we invest in delivering “${idea.title}”?`, optionsConsidered: (p.ideas?.ideas ?? []).map((i) => i.title), criteria: p.weights,
+          chosenOption: idea.title, rationale: note.trim() || rec.reasons.join(" "), decisionMaker: by.trim(), date: now().slice(0, 10),
+          reconsiderIf: "Any mandatory gate fails, a key assumption is invalidated, or the business case turns NPV-negative.",
+          risks: [...idea.risks, ...(bc && metrics(bc.inputs, bc.scenarios.conservative).npv < 0 ? ["Conservative scenario is NPV-negative"] : [])].join("; "),
+        }, ideaId);
+      }
+      get().os((o) => ({ ...o, approvals: [...o.approvals, record] }), `decision.${action}`);
+      if (action === "reject") get().set((c) => ({ ...c, nodes: c.nodes.map((n) => (n.tags.includes(`idea:${ideaId}`) ? { ...n, status: "rejected" } : n)) }));
+      return null;
     },
 
     saveVersion: async (label) => {

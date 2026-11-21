@@ -29,7 +29,7 @@ export function blankProject(id: string, thought: string, mode: ProjectState["mo
   return {
     id, title: thought.slice(0, 60), thought, mode, stage: "thought", interpretation: null, answers: {},
     nodes: [], edges: [], ideas: null, sliders: { ...DEFAULT_SLIDERS }, weights: { ...DEFAULT_WEIGHTS },
-    evaluation: null, selectedIdeaId: null, decision: null, blueprint: null, roadmap: null, tasks: [], frameworks: [], design: null,
+    evaluation: null, selectedIdeaId: null, decision: null, blueprint: null, roadmap: null, tasks: [], frameworks: [], design: null, os: null,
     createdAt: t, updatedAt: t,
   };
 }
@@ -46,7 +46,7 @@ class LocalRepo implements Repo {
       .map((p) => ({ id: p!.id, title: p!.title, thought: p!.thought, stage: p!.stage, updatedAt: p!.updatedAt }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
-  async load(id: string) { const p = this.get<ProjectState | null>(`p:${id}`, null); return p ? { ...p, design: p.design ?? null } : null; }
+  async load(id: string) { const p = this.get<ProjectState | null>(`p:${id}`, null); return p ? { ...p, design: p.design ?? null, os: p.os ?? null } : null; }
   async create(p: ProjectState) { this.set(`p:${p.id}`, p); this.set("index", [p.id, ...this.get<string[]>("index", [])]); return p.id; }
   async save(p: ProjectState) { this.set(`p:${p.id}`, p); }
   async remove(id: string) { localStorage.removeItem(LS + `p:${id}`); this.set("index", this.get<string[]>("index", []).filter((x) => x !== id)); }
@@ -127,7 +127,7 @@ class SupabaseRepo implements Repo {
       selectedIdeaId: s.selectedIdeaId ?? null, frameworks: s.frameworks ?? [], aiMode: s.aiMode, generatedWith: s.generatedWith,
       nodes: (n.data ?? []).map(rowNode),
       edges: (e.data ?? []).map((r) => ({ id: r.id, source: r.source, target: r.target, kind: r.kind, label: r.label ?? undefined })),
-      ideas: art.ideas ?? null, evaluation: art.evaluation ?? null, blueprint: art.blueprint ?? null, roadmap: art.roadmap ?? null, decision: art.decision ?? null, design: s.design ?? null,
+      ideas: art.ideas ?? null, evaluation: art.evaluation ?? null, blueprint: art.blueprint ?? null, roadmap: art.roadmap ?? null, decision: art.decision ?? null, design: s.design ?? null, os: s.os ?? null,
       tasks: (t.data ?? []).map(rowTask),
       createdAt: p.created_at, updatedAt: p.updated_at,
     };
@@ -141,7 +141,7 @@ class SupabaseRepo implements Repo {
     const pid = p.id;
     check(await this.sb.from("projects").update({
       title: p.title, thought: p.thought, mode: p.mode, stage: p.stage, interpretation: p.interpretation,
-      settings: { answers: p.answers, sliders: p.sliders, weights: p.weights, selectedIdeaId: p.selectedIdeaId, frameworks: p.frameworks, aiMode: p.aiMode, generatedWith: p.generatedWith, design: p.design },
+      settings: { answers: p.answers, sliders: p.sliders, weights: p.weights, selectedIdeaId: p.selectedIdeaId, frameworks: p.frameworks, aiMode: p.aiMode, generatedWith: p.generatedWith, design: p.design, os: p.os },
     }).eq("id", pid));
     const ops: PromiseLike<unknown>[] = [];
     const changed = <T,>(a: T, b: T | undefined) => !prev || JSON.stringify(a) !== JSON.stringify(b);

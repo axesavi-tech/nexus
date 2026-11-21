@@ -10,26 +10,49 @@ import { ThoughtView } from "./views/ThoughtView";
 import { CanvasView } from "./views/CanvasView";
 import { IdeaLab } from "./views/IdeaLab";
 import { DesignStudio } from "./views/DesignStudio";
+import { EvidenceLab } from "./views/EvidenceLab";
+import { BusinessCase } from "./views/BusinessCase";
 import { ConsultingBoard } from "./views/ConsultingBoard";
 import { SolutionStudio } from "./views/SolutionStudio";
 import { ExecutionCockpit } from "./views/ExecutionCockpit";
 
 const VIEWS = [
-  { id: "thought", name: "Thought Room", glyph: "◉", q: "What is this really about?" },
-  { id: "canvas", name: "Infinity Canvas", glyph: "✳", q: "What else is possible?" },
-  { id: "design", name: "Design Studio", glyph: "❖", q: "Who is it for, and how many ways could we solve it?" },
-  { id: "ideas", name: "Idea Lab", glyph: "✺", q: "Which concepts are worth pursuing?" },
-  { id: "board", name: "Consulting Board", glyph: "▦", q: "What really matters?" },
-  { id: "solution", name: "Solution Studio", glyph: "◆", q: "What should we do?" },
-  { id: "execution", name: "Execution Cockpit", glyph: "▶", q: "How do we make it happen?" },
+  { id: "thought", name: "Idea Brief", glyph: "◉", q: "What is this really about?", group: "Discover" },
+  { id: "canvas", name: "Knowledge Map", glyph: "✳", q: "How does it all connect?", group: "Discover" },
+  { id: "discovery", name: "Problem Discovery", glyph: "☺", q: "Who has the problem, and is it real?", group: "Discover" },
+  { id: "ideation", name: "Ideation Studio", glyph: "❖", q: "How many ways could we solve it?", group: "Create" },
+  { id: "ideas", name: "Concept Portfolio", glyph: "✺", q: "Which concepts are worth pursuing?", group: "Create" },
+  { id: "evidence", name: "Evidence Lab", glyph: "✓", q: "What supports or challenges it?", group: "Decide" },
+  { id: "board", name: "Decision Intelligence", glyph: "⚑", q: "Is it worth pursuing — can you prove it?", group: "Decide" },
+  { id: "business", name: "Business Case", glyph: "₹", q: "Does the investment make sense?", group: "Decide" },
+  { id: "validation", name: "Validation Lab", glyph: "⚗", q: "What must be true, and how do we test it?", group: "Decide" },
+  { id: "solution", name: "Solution Studio", glyph: "◆", q: "What exactly are we building?", group: "Deliver" },
+  { id: "execution", name: "Delivery Planner", glyph: "▶", q: "How do we make it happen?", group: "Deliver" },
 ] as const;
-type ViewId = (typeof VIEWS)[number]["id"];
+type ViewId = (typeof VIEWS)[number]["id"] | "design";
 
-const STAGES = ["thought", "discovery", "ideation", "evaluation", "solution", "implementation"];
+/** Lifecycle completeness, derived from the data itself (not a stored label). */
+function lifecycle(p: ProjectState): { name: string; done: boolean }[] {
+  const os = p.os;
+  return [
+    { name: "Thought", done: !!p.interpretation },
+    { name: "Discovery", done: !!p.design?.empathy || (os?.evidence ?? []).some((e) => e.links.some((l) => l.targetKind === "problem")) },
+    { name: "Problem definition", done: (p.design?.hmws.length ?? 0) > 0 },
+    { name: "Ideation", done: !!p.ideas },
+    { name: "Evaluation", done: !!p.evaluation },
+    { name: "Validation", done: (p.design?.tests ?? []).some((t) => Object.values(t.results).some((r) => r.status === "validated" || r.status === "invalidated")) || (os?.evidence ?? []).some((e) => e.links.some((l) => l.targetKind === "concept")) },
+    { name: "Investment decision", done: (os?.approvals ?? []).some((a) => a.action === "approve") },
+    { name: "Solution design", done: !!p.blueprint },
+    { name: "Delivery planning", done: !!p.roadmap },
+    { name: "Execution", done: p.tasks.some((t) => t.status === "done") },
+    { name: "Value realization", done: false },
+  ];
+}
 
 export function Workspace({ id }: { id: string }) {
   const { p, load, busy, error, clearError, undo, redo, past, future, saveState } = useNexus();
-  const [view, setView] = useState<ViewId>("canvas");
+  const [view, setViewRaw] = useState<ViewId>("canvas");
+  const setView = (v: ViewId) => setViewRaw(v === "design" ? "ideation" : v);
   const [versions, setVersions] = useState<VersionSummary[] | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const lastSaved = useRef<ProjectState | null>(null);
@@ -65,7 +88,7 @@ export function Workspace({ id }: { id: string }) {
       if (tgt.closest("input,textarea,[contenteditable=true]")) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
-      if (e.altKey && /^[1-7]$/.test(e.key)) setView(VIEWS[Number(e.key) - 1].id);
+      if (e.altKey && /^[1-9]$/.test(e.key)) setViewRaw(VIEWS[Number(e.key) - 1].id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -73,7 +96,8 @@ export function Workspace({ id }: { id: string }) {
 
   if (!p) return <div className="h-screen grid place-items-center">{error ? <div className="text-center"><p className="text-danger mb-4">{error}</p><Link className="btn" href="/">Back</Link></div> : <Spinner label="Opening project…" />}</div>;
 
-  const stageIdx = STAGES.indexOf(p.stage);
+  const stages = lifecycle(p);
+  const nextIdx = stages.findIndex((s) => !s.done);
   const toggleTheme = () => {
     const t = theme === "dark" ? "light" : "dark";
     setTheme(t); document.documentElement.dataset.theme = t;
@@ -84,7 +108,7 @@ export function Workspace({ id }: { id: string }) {
     <div className="h-screen flex flex-col overflow-hidden">
       {/* Top bar */}
       <header className="h-14 shrink-0 flex items-center gap-3 px-4 border-b border-line bg-bg2">
-        <Link href="/" className="flex items-center gap-2 pr-3 border-r border-line" title="Knowledge Vault"><span className="text-accent">◉</span><span className="tracking-[.3em] text-xs font-semibold">NEXUS</span></Link>
+        <Link href="/" className="flex items-center gap-2 pr-3 border-r border-line" title="Knowledge Vault"><span className="text-accent">◉</span><span className="leading-tight"><span className="tracking-[.3em] text-xs font-semibold block">NEXUS</span><span className="text-[9.5px] text-ink3 tracking-wider block">IDEA → OUTCOME OS</span></span></Link>
         <input
           className="bg-transparent serif text-lg flex-1 min-w-0 outline-none focus:bg-panel rounded px-2"
           value={p.title}
@@ -104,18 +128,21 @@ export function Workspace({ id }: { id: string }) {
         {/* Left nav */}
         <nav className="w-56 shrink-0 border-r border-line bg-bg2 flex flex-col py-3" aria-label="Workspace">
           {VIEWS.map((v, i) => (
-            <button key={v.id} onClick={() => setView(v.id)} title={`${v.q} (Alt+${i + 1})`}
-              className={`mx-2 mb-0.5 px-3 py-2 rounded-lg text-left text-sm flex items-center gap-3 transition ${view === v.id ? "bg-panel2 text-ink" : "text-ink2 hover:bg-panel hover:text-ink"}`}>
-              <span className="w-4 text-center" style={{ color: view === v.id ? "var(--accent)" : undefined }} aria-hidden>{v.glyph}</span>{v.name}
-            </button>
+            <div key={v.id}>
+              {(i === 0 || VIEWS[i - 1].group !== v.group) && <div className="label px-5 pt-3 pb-1 !text-[10px]">{v.group}</div>}
+              <button onClick={() => setView(v.id)} title={`${v.q}${i < 9 ? ` (Alt+${i + 1})` : ""}`}
+                className={`mx-2 mb-0.5 px-3 py-1.5 rounded-lg text-left text-sm flex items-center gap-3 transition w-[calc(100%-1rem)] ${view === v.id ? "bg-panel2 text-ink" : "text-ink2 hover:bg-panel hover:text-ink"}`}>
+                <span className="w-4 text-center" style={{ color: view === v.id ? "var(--accent)" : undefined }} aria-hidden>{v.glyph}</span>{v.name}
+              </button>
+            </div>
           ))}
           <div className="mt-6 px-5">
-            <div className="label mb-2">Journey</div>
-            <ol className="space-y-1.5">
-              {STAGES.map((s, i) => (
-                <li key={s} className="flex items-center gap-2 text-xs capitalize" style={{ color: i <= stageIdx ? "var(--ink-2)" : "var(--ink-3)" }}>
-                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: i < stageIdx ? "var(--accent-2)" : i === stageIdx ? "var(--accent)" : "var(--line-2)" }} />
-                  {s}{i === stageIdx && <span className="sr-only"> (current)</span>}
+            <div className="label mb-2">Lifecycle</div>
+            <ol className="space-y-1">
+              {stages.map((s, i) => (
+                <li key={s.name} className="flex items-center gap-2 text-[11.5px]" style={{ color: s.done ? "var(--ink-2)" : i === nextIdx ? "var(--ink)" : "var(--ink-3)" }}>
+                  <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: s.done ? "var(--accent-2)" : i === nextIdx ? "var(--accent)" : "var(--line-2)" }} />
+                  {s.name}{s.done && <span className="sr-only"> (done)</span>}{i === nextIdx && <span className="sr-only"> (next)</span>}
                 </li>
               ))}
             </ol>
@@ -131,7 +158,11 @@ export function Workspace({ id }: { id: string }) {
         <main className="flex-1 min-w-0 relative">
           {view === "thought" && <ThoughtView go={setView} />}
           {view === "canvas" && <CanvasView go={setView} />}
-          {view === "design" && <DesignStudio go={setView} />}
+          {view === "discovery" && <DesignStudio key="d" initial="empathize" go={setView} />}
+          {view === "ideation" && <DesignStudio key="i" initial="ideate" go={setView} />}
+          {view === "validation" && <DesignStudio key="v" initial="test" go={setView} />}
+          {view === "evidence" && <EvidenceLab go={setView} />}
+          {view === "business" && <BusinessCase go={setView} />}
           {view === "ideas" && <IdeaLab go={setView} />}
           {view === "board" && <ConsultingBoard go={setView} />}
           {view === "solution" && <SolutionStudio go={setView} />}

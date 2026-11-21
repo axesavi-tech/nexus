@@ -2,6 +2,7 @@ import type { Mode } from "./schemas";
 
 /** Required demonstration scenarios (master prompt §26). Labelled as samples in the UI. */
 export const SAMPLES: { id: string; label: string; thought: string; mode: Mode }[] = [
+  { id: "R", label: "Reference · D2C retail", thought: "I want to improve the experience of purchasing premium handloom sarees online.", mode: "strategic" },
   { id: "A", label: "Entrepreneurial idea", thought: "I want to create a premium D2C brand, but I don't know what to sell.", mode: "guided" },
   { id: "B", label: "Business transformation", thought: "Our customer onboarding process takes 12 days. How can we reduce it to 3?", mode: "strategic" },
   { id: "C", label: "Technical invention", thought: "What if we could create a new kind of low-power computing chip?", mode: "strategic" },
