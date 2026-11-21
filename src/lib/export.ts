@@ -9,7 +9,7 @@ const CLAIM_LABEL: Record<string, string> = {
 };
 export const claimLabel = (c?: string) => (c ? CLAIM_LABEL[c] ?? c : "—");
 
-export function toMarkdown(p: ProjectState, sections: ("thought" | "ideas" | "evaluation" | "decision" | "blueprint" | "roadmap" | "map")[] = ["thought", "ideas", "evaluation", "decision", "blueprint", "roadmap", "map"]): string {
+export function toMarkdown(p: ProjectState, sections: ("thought" | "design" | "ideas" | "evaluation" | "decision" | "blueprint" | "roadmap" | "map")[] = ["thought", "design", "ideas", "evaluation", "decision", "blueprint", "roadmap", "map"]): string {
   const L: string[] = [];
   const I = p.interpretation;
   L.push(`# ${p.title}`, "", `> ${p.thought}`, "", `_Exported from NEXUS on ${new Date().toISOString().slice(0, 10)}. AI mode: ${p.aiMode === "dev" ? "development templates (not AI analysis)" : "live AI"}. Items marked as inference, assumption or forecast are not verified facts._`, "");
@@ -20,6 +20,32 @@ export function toMarkdown(p: ProjectState, sections: ("thought" | "ideas" | "ev
     if (I.assumptions.length) L.push("**Assumptions:**", ...I.assumptions.map((a) => `- ${a}`), "");
     if (I.missingInformation.length) L.push("**Missing information:**", ...I.missingInformation.map((a) => `- ${a}`), "");
     if (p.frameworks.length) L.push("**Frameworks in use:** " + p.frameworks.map((f) => byId(f)?.name ?? f).join(", "), "");
+  }
+  const D = p.design;
+  if (sections.includes("design") && D && (D.empathy || D.hmws.length || D.sparks.length)) {
+    L.push("## Design thinking", "");
+    if (D.empathy) {
+      for (const ps of D.empathy.personas) {
+        L.push(`### Persona: ${ps.name} — ${ps.role} _(${ps.basis === "proto_persona" ? "proto-persona, unvalidated" : "grounded in research notes"})_`, "", ps.context, "");
+        if (ps.quote) L.push(`> ${ps.quote}`, "");
+        L.push(`- **Says:** ${ps.empathy.says.join("; ")}`, `- **Thinks:** ${ps.empathy.thinks.join("; ")}`, `- **Does:** ${ps.empathy.does.join("; ")}`, `- **Feels:** ${ps.empathy.feels.join("; ")}`, `- **Goals:** ${ps.goals.join("; ")}`, `- **Pains:** ${ps.pains.join("; ")}`, "");
+        L.push("| Stage | Emotion | Pain | Opportunity |", "|---|---|---|---|", ...ps.journey.map((j) => `| ${j.stage} | ${j.emotion > 0 ? "+" : ""}${j.emotion} | ${j.pain} | ${j.opportunity} |`), "");
+      }
+      if (D.empathy.insights.length) L.push("### Insights", ...D.empathy.insights.map((i) => `- ${i.text} _(${claimLabel(i.claim)})_`), "");
+      L.push("### Point of view", ...D.empathy.povs.map((v) => `- ${v.user} needs ${v.need} because ${v.insight}.`), "");
+    }
+    if (D.hmws.length) L.push("### How Might We", ...D.hmws.map((h) => `- ${h.starred ? "★ " : ""}${h.question}`), "");
+    if (D.sparks.length) {
+      L.push(`### Sparks (${D.sparks.length})`);
+      for (const s of [...D.sparks].sort((a, b) => b.votes - a.votes)) L.push(`- ${s.votes ? `${"●".repeat(s.votes)} ` : ""}**${s.title}** — ${s.description} _(${s.technique === "own" ? "own idea" : s.technique})_`);
+      L.push("");
+    }
+    for (const t of D.tests) {
+      const idea = p.ideas?.ideas.find((i) => i.id === t.ideaId);
+      L.push(`### Test plan: ${idea?.title ?? t.ideaId}`, "", "| Assumption | Lens | Importance | Evidence | Result | Learning |", "|---|---|---|---|---|---|",
+        ...t.assumptions.map((a) => `| ${a.statement} | ${a.lens} | ${a.importance} | ${a.evidence} | ${t.results[a.id]?.status ?? "untested"} | ${t.results[a.id]?.learning ?? ""} |`), "",
+        ...t.tests.map((x) => `- **${x.assumptionId} · ${x.prototype}:** ${x.description} — measure ${x.metric}; right if ${x.successCriteria}`), "");
+    }
   }
   if (sections.includes("ideas") && p.ideas) {
     L.push("## Options", "");

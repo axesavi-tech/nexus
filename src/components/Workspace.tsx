@@ -9,6 +9,7 @@ import { Spinner } from "./ui";
 import { ThoughtView } from "./views/ThoughtView";
 import { CanvasView } from "./views/CanvasView";
 import { IdeaLab } from "./views/IdeaLab";
+import { DesignStudio } from "./views/DesignStudio";
 import { ConsultingBoard } from "./views/ConsultingBoard";
 import { SolutionStudio } from "./views/SolutionStudio";
 import { ExecutionCockpit } from "./views/ExecutionCockpit";
@@ -16,7 +17,8 @@ import { ExecutionCockpit } from "./views/ExecutionCockpit";
 const VIEWS = [
   { id: "thought", name: "Thought Room", glyph: "◉", q: "What is this really about?" },
   { id: "canvas", name: "Infinity Canvas", glyph: "✳", q: "What else is possible?" },
-  { id: "ideas", name: "Idea Lab", glyph: "✺", q: "What else is possible?" },
+  { id: "design", name: "Design Studio", glyph: "❖", q: "Who is it for, and how many ways could we solve it?" },
+  { id: "ideas", name: "Idea Lab", glyph: "✺", q: "Which concepts are worth pursuing?" },
   { id: "board", name: "Consulting Board", glyph: "▦", q: "What really matters?" },
   { id: "solution", name: "Solution Studio", glyph: "◆", q: "What should we do?" },
   { id: "execution", name: "Execution Cockpit", glyph: "▶", q: "How do we make it happen?" },
@@ -63,7 +65,7 @@ export function Workspace({ id }: { id: string }) {
       if (tgt.closest("input,textarea,[contenteditable=true]")) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
-      if (e.altKey && /^[1-6]$/.test(e.key)) setView(VIEWS[Number(e.key) - 1].id);
+      if (e.altKey && /^[1-7]$/.test(e.key)) setView(VIEWS[Number(e.key) - 1].id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -129,6 +131,7 @@ export function Workspace({ id }: { id: string }) {
         <main className="flex-1 min-w-0 relative">
           {view === "thought" && <ThoughtView go={setView} />}
           {view === "canvas" && <CanvasView go={setView} />}
+          {view === "design" && <DesignStudio go={setView} />}
           {view === "ideas" && <IdeaLab go={setView} />}
           {view === "board" && <ConsultingBoard go={setView} />}
           {view === "solution" && <SolutionStudio go={setView} />}

@@ -1,5 +1,7 @@
 # NEXUS — the thought-to-execution intelligence engine
 
+**Design Studio (new):** a full design-thinking loop on the same graph — **Empathize** (personas grounded in your research notes or flagged as proto-personas, empathy maps, emotional journey maps) → **Define** (insights, point-of-view statements, How Might We questions) → **Ideate** (spark board with 9 techniques — open brainstorm, SCAMPER, analogies, worst-possible-idea, extreme constraints, Crazy 8s, persona lens, trend mash-up, "Yes, and…" — your own sparks, theme clustering with unexplored angles, dot voting, convergence into concepts) → **Prototype & Test** (assumption map of importance × evidence, test cards with success thresholds set in advance, storyboard, results that write evidence to the map and flag downstream work when an assumption fails). **Brain dump** on the canvas turns messy notes into typed nodes for review.
+
 **Phase 1 MVP.** One unstructured thought → an editable mind map → divergent options → transparent evaluation → a recorded human decision → a solution blueprint → a scheduled delivery roadmap with traceable tasks. Everything runs end-to-end in the browser against Supabase.
 
 See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for product architecture, data model, AI orchestration and the implemented-vs-deferred matrix.
@@ -26,7 +28,7 @@ npm run dev                     # http://localhost:3000
 ## Tests
 
 ```bash
-npm test            # 18 tests: scoring maths, graph patching, cycle-breaking & scheduling,
+npm test            # 33 tests (incl. design-thinking ops & helpers): scoring maths, graph patching, cycle-breaking & scheduling,
                     # assumption propagation, framework metadata & recommendation, JSON-schema
                     # generation, and the full thought→roadmap pipeline for all five sample scenarios
 npm run typecheck
@@ -76,6 +78,7 @@ src/
     schemas.ts         domain types + zod schemas for every AI output
     graph.ts           patch application, layouts, traversal, roadmap sanitising & scheduling, assumption propagation
     scoring.ts         weighted scoring, provisional handling, sensitivity, Pareto, idea quality gate
+    design.ts          design-thinking techniques, dot voting, convergence, assumption-map maths
     frameworks.ts      27-framework library with metadata + explainable recommender
     ai/                gateway (provider abstraction, validation, retry), prompts, dev templates
     store.ts           project aggregate, undo/redo, AI workflows

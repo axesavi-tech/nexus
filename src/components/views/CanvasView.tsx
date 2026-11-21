@@ -82,6 +82,7 @@ function Canvas({ go }: { go: (v: ViewId) => void }) {
   const [layout, setLayout] = useState<Layout>("mind");
   const [search, setSearch] = useState("");
   const [cmd, setCmd] = useState("");
+  const [dump, setDump] = useState<string | null>(null);
   const [multi, setMulti] = useState<string[]>([]);
   const dragStart = useRef<ProjectState | null>(null);
   const [measured, setMeasured] = useState<Record<string, { width: number; height: number }>>({});
@@ -222,6 +223,7 @@ function Canvas({ go }: { go: (v: ViewId) => void }) {
           <button className="btn !py-1.5 pointer-events-auto" onClick={() => addChild(selected ?? p.nodes.find((n) => !n.parentId)?.id ?? null)} title="Add child (Tab)">＋ Node</button>
           {layout === "mind" && <button className="btn !py-1.5 pointer-events-auto" onClick={() => { set((cur) => ({ ...cur, nodes: radialLayout(cur.nodes) }), "layout.auto"); setTimeout(() => rf.fitView({ padding: 0.25, duration: 400 }), 50); }}>Auto layout</button>}
           <button className="btn !py-1.5 pointer-events-auto" onClick={() => rf.fitView({ padding: 0.25, duration: 400 })}>Fit</button>
+          <button className="btn !py-1.5 pointer-events-auto" disabled={!!busy || !!pending} onClick={() => setDump("")} title="Paste messy notes — NEXUS sorts them into typed nodes for you to review">✎ Brain dump</button>
           <button className="btn !py-1.5 pointer-events-auto" disabled={!!busy} onClick={() => ideate(multi.length ? multi : undefined)} title="Generate divergent options from the selected nodes (or the whole map)">✺ Generate options</button>
           {multi.length > 1 && (
             <div className="card flex items-center gap-1 p-1 pointer-events-auto">
@@ -240,6 +242,32 @@ function Canvas({ go }: { go: (v: ViewId) => void }) {
             <p className="text-sm mb-2">{pending.summary}</p>
             {pending.rejected.length > 0 && <p className="text-xs text-warn mb-2">Discarded invalid references: {pending.rejected.join("; ")}</p>}
             <div className="flex gap-2"><button className="btn btn-primary" onClick={acceptPending}>Accept</button><button className="btn" onClick={rejectPending}>Discard</button><span className="text-xs text-ink3 self-center">Accepted changes stay undoable.</span></div>
+          </div>
+        )}
+
+        {dump !== null && (
+          <div className="absolute inset-0 z-40 grid place-items-center bg-black/40 p-6" role="dialog" aria-modal="true" aria-label="Brain dump">
+            <form className="card w-full max-w-2xl p-5 shadow-2xl fade-in" onSubmit={async (e) => {
+              e.preventDefault();
+              const text = dump.trim();
+              const target = selected ?? p.nodes.find((n) => !n.parentId)?.id;
+              if (!text || !target) return;
+              setDump(null);
+              await nodeAction(target, "structure", { instruction: text });
+            }}>
+              <div className="flex items-start justify-between gap-4 mb-1">
+                <h3 className="serif text-2xl">Brain dump</h3>
+                <button type="button" className="text-ink3" onClick={() => setDump(null)} aria-label="Close">✕</button>
+              </div>
+              <p className="text-sm text-ink2 mb-3">Type or paste everything on your mind — fragments, worries, half-ideas, quotes. NEXUS sorts each point into a question, problem, insight, idea, assumption, constraint or risk {sel ? <>under <b>“{sel.title.slice(0, 40)}”</b></> : "under your root thought"}. You review before anything changes.</p>
+              <textarea autoFocus className="input min-h-[220px] text-sm leading-relaxed" maxLength={8000} value={dump} onChange={(e) => setDump(e.target.value)}
+                placeholder={"customers keep asking for faster delivery\nwhat if we partnered with local tailors?\nbudget is only ₹2L for this quarter\nI assume people will pay more for handloom…"} />
+              <div className="flex items-center gap-2 mt-3">
+                <button className="btn btn-primary" disabled={!dump.trim()}>Sort into the map</button>
+                <button type="button" className="btn" onClick={() => setDump(null)}>Cancel</button>
+                <span className="text-[11px] text-ink3 ml-auto">{dump.length.toLocaleString()} / 8,000</span>
+              </div>
+            </form>
           </div>
         )}
 
