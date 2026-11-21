@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase";
+import { VaultGate } from "./VaultGate";
 
 export function useSession() {
   const sb = supabaseBrowser();
@@ -16,7 +17,7 @@ export function useSession() {
   return { enabled: Boolean(sb), session, ready };
 }
 
-export function AuthGate({ children }: { children: React.ReactNode }) {
+export function AuthGate({ children, vault = true }: { children: React.ReactNode; vault?: boolean }) {
   const { enabled, session, ready } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -25,7 +26,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [busy, setBusy] = useState(false);
   if (!enabled) return <>{children}</>;
   if (!ready) return <div className="h-screen grid place-items-center text-ink3">Loading…</div>;
-  if (session) return <>{children}</>;
+  if (session) return vault ? <VaultGate session={session}>{children}</VaultGate> : <>{children}</>;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

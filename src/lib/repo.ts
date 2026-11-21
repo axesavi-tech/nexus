@@ -7,6 +7,12 @@ import type { NEdge, NNode, ProjectState, Task } from "./schemas";
 import { DEFAULT_SLIDERS } from "./schemas";
 import { DEFAULT_WEIGHTS } from "./scoring";
 import { supabaseBrowser } from "./supabase";
+import { isSealed, open, seal, vaultKey, type Sealed } from "./vault";
+
+/** Placeholder written to plaintext columns of an encrypted project — the real values live only in the sealed blob. */
+const SEALED_TITLE = "🔒 Encrypted";
+type SealedSettings = { sealed: Sealed; meta: Sealed };
+const isSealedSettings = (s: unknown): s is SealedSettings => !!s && typeof s === "object" && isSealed((s as SealedSettings).sealed);
 
 export interface ProjectSummary { id: string; title: string; thought: string; stage: string; updatedAt: string }
 export interface VersionSummary { id: string; label: string; createdAt: string }
@@ -29,7 +35,7 @@ export function blankProject(id: string, thought: string, mode: ProjectState["mo
   return {
     id, title: thought.slice(0, 60), thought, mode, stage: "thought", interpretation: null, answers: {},
     nodes: [], edges: [], ideas: null, sliders: { ...DEFAULT_SLIDERS }, weights: { ...DEFAULT_WEIGHTS },
-    evaluation: null, selectedIdeaId: null, decision: null, blueprint: null, roadmap: null, tasks: [], frameworks: [], design: null, os: null,
+    evaluation: null, selectedIdeaId: null, decision: null, blueprint: null, roadmap: null, tasks: [], frameworks: [], design: null, os: null, guide: null,
     createdAt: t, updatedAt: t,
   };
 }
@@ -46,7 +52,7 @@ class LocalRepo implements Repo {
       .map((p) => ({ id: p!.id, title: p!.title, thought: p!.thought, stage: p!.stage, updatedAt: p!.updatedAt }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
-  async load(id: string) { const p = this.get<ProjectState | null>(`p:${id}`, null); return p ? { ...p, design: p.design ?? null, os: p.os ?? null } : null; }
+  async load(id: string) { const p = this.get<ProjectState | null>(`p:${id}`, null); return p ? { ...p, design: p.design ?? null, os: p.os ?? null, guide: p.guide ?? null } : null; }
   async create(p: ProjectState) { this.set(`p:${p.id}`, p); this.set("index", [p.id, ...this.get<string[]>("index", [])]); return p.id; }
   async save(p: ProjectState) { this.set(`p:${p.id}`, p); }
   async remove(id: string) { localStorage.removeItem(LS + `p:${id}`); this.set("index", this.get<string[]>("index", []).filter((x) => x !== id)); }
@@ -105,13 +111,49 @@ function check<T extends { error: { message: string } | null }>(r: T): T { if (r
 class SupabaseRepo implements Repo {
   kind = "supabase" as const;
   private get sb() { return supabaseBrowser()!; }
+  private key() { const k = vaultKey(); if (!k) throw new Error("Your vault is locked — unlock it to open your ideas."); return k; }
+
+  // ---------- zero-knowledge (sealed) storage: only ciphertext reaches the database ----------
+  private async sealedSettings(p: ProjectState): Promise<SealedSettings> {
+    const k = this.key();
+    return { sealed: await seal(k, p), meta: await seal(k, { title: p.title, thought: p.thought.slice(0, 200), stage: p.stage }) };
+  }
+  private async scrubPlaintext(pid: string) {
+    // Remove anything an older, unencrypted save left behind: graph rows, artifacts, tasks and plaintext versions.
+    await Promise.all([
+      this.sb.from("nodes").delete().eq("project_id", pid),
+      this.sb.from("edges").delete().eq("project_id", pid),
+      this.sb.from("artifacts").delete().eq("project_id", pid),
+      this.sb.from("tasks").delete().eq("project_id", pid),
+      this.sb.from("versions").delete().eq("project_id", pid).is("snapshot->ct", null),
+    ]);
+  }
+
   async list() {
+    if (vaultKey()) {
+      const { data } = check(await this.sb.from("projects").select("id,title,thought,stage,updated_at,meta:settings->meta").order("updated_at", { ascending: false }).limit(100));
+      const k = this.key();
+      return Promise.all((data ?? []).map(async (r) => {
+        if (isSealed(r.meta)) {
+          try { const m = await open<{ title: string; thought: string; stage: string }>(k, r.meta as Sealed); return { id: r.id, title: m.title, thought: m.thought, stage: m.stage, updatedAt: r.updated_at }; }
+          catch { return { id: r.id, title: "🔒 Can't decrypt (different vault?)", thought: "", stage: r.stage, updatedAt: r.updated_at }; }
+        }
+        return { id: r.id, title: r.title, thought: r.thought, stage: r.stage, updatedAt: r.updated_at };
+      }));
+    }
     const { data } = check(await this.sb.from("projects").select("id,title,thought,stage,updated_at").order("updated_at", { ascending: false }).limit(100));
     return (data ?? []).map((r) => ({ id: r.id, title: r.title, thought: r.thought, stage: r.stage, updatedAt: r.updated_at }));
   }
   async load(id: string): Promise<ProjectState | null> {
     const p = check(await this.sb.from("projects").select("*").eq("id", id).maybeSingle()).data;
     if (!p) return null;
+    if (isSealedSettings(p.settings)) {
+      let st: ProjectState;
+      try { st = await open<ProjectState>(this.key(), p.settings.sealed); }
+      catch (e) { throw new Error((e as Error).message.includes("locked") ? (e as Error).message : "This project can't be decrypted with your vault key."); }
+      const base = blankProject(p.id, st.thought, st.mode);
+      return { ...base, ...st, id: p.id, createdAt: p.created_at, updatedAt: p.updated_at };
+    }
     const [n, e, a, t] = await Promise.all([
       this.sb.from("nodes").select("*").eq("project_id", id),
       this.sb.from("edges").select("*").eq("project_id", id),
@@ -127,21 +169,31 @@ class SupabaseRepo implements Repo {
       selectedIdeaId: s.selectedIdeaId ?? null, frameworks: s.frameworks ?? [], aiMode: s.aiMode, generatedWith: s.generatedWith,
       nodes: (n.data ?? []).map(rowNode),
       edges: (e.data ?? []).map((r) => ({ id: r.id, source: r.source, target: r.target, kind: r.kind, label: r.label ?? undefined })),
-      ideas: art.ideas ?? null, evaluation: art.evaluation ?? null, blueprint: art.blueprint ?? null, roadmap: art.roadmap ?? null, decision: art.decision ?? null, design: s.design ?? null, os: s.os ?? null,
+      ideas: art.ideas ?? null, evaluation: art.evaluation ?? null, blueprint: art.blueprint ?? null, roadmap: art.roadmap ?? null, decision: art.decision ?? null, design: s.design ?? null, os: s.os ?? null, guide: s.guide ?? null,
       tasks: (t.data ?? []).map(rowTask),
       createdAt: p.created_at, updatedAt: p.updated_at,
     };
   }
   async create(p: ProjectState) {
+    if (vaultKey()) {
+      const { data } = check(await this.sb.from("projects").insert({ title: SEALED_TITLE, thought: "", mode: p.mode, stage: p.stage, settings: await this.sealedSettings(p) }).select("id").single());
+      await this.audit(data!.id, "project.created", {});
+      return data!.id as string;
+    }
     const { data } = check(await this.sb.from("projects").insert({ title: p.title, thought: p.thought, mode: p.mode, stage: p.stage, settings: {} }).select("id").single());
     await this.audit(data!.id, "project.created", { mode: p.mode });
     return data!.id as string;
   }
   async save(p: ProjectState, prev?: ProjectState | null) {
+    if (vaultKey()) {
+      check(await this.sb.from("projects").update({ title: SEALED_TITLE, thought: "", mode: p.mode, stage: p.stage, interpretation: null, settings: await this.sealedSettings(p) }).eq("id", p.id));
+      if (!prev) await this.scrubPlaintext(p.id);
+      return;
+    }
     const pid = p.id;
     check(await this.sb.from("projects").update({
       title: p.title, thought: p.thought, mode: p.mode, stage: p.stage, interpretation: p.interpretation,
-      settings: { answers: p.answers, sliders: p.sliders, weights: p.weights, selectedIdeaId: p.selectedIdeaId, frameworks: p.frameworks, aiMode: p.aiMode, generatedWith: p.generatedWith, design: p.design, os: p.os },
+      settings: { answers: p.answers, sliders: p.sliders, weights: p.weights, selectedIdeaId: p.selectedIdeaId, frameworks: p.frameworks, aiMode: p.aiMode, generatedWith: p.generatedWith, design: p.design, os: p.os, guide: p.guide },
     }).eq("id", pid));
     const ops: PromiseLike<unknown>[] = [];
     const changed = <T,>(a: T, b: T | undefined) => !prev || JSON.stringify(a) !== JSON.stringify(b);
@@ -169,13 +221,21 @@ class SupabaseRepo implements Repo {
     await Promise.all(ops);
   }
   async remove(id: string) { check(await this.sb.from("projects").delete().eq("id", id)); }
-  async snapshot(p: ProjectState, label: string) { check(await this.sb.from("versions").insert({ project_id: p.id, label, snapshot: p })); }
+  async snapshot(p: ProjectState, label: string) {
+    const k = vaultKey();
+    check(await this.sb.from("versions").insert({ project_id: p.id, label: k ? "Version" : label, snapshot: k ? await seal(k, { label, state: p }) : p }));
+  }
   async versions(id: string) {
-    const { data } = check(await this.sb.from("versions").select("id,label,created_at").eq("project_id", id).order("created_at", { ascending: false }).limit(50));
-    return (data ?? []).map((r) => ({ id: r.id, label: r.label, createdAt: r.created_at }));
+    const k = vaultKey();
+    const { data } = check(await this.sb.from("versions").select(k ? "id,label,created_at,snapshot" : "id,label,created_at").eq("project_id", id).order("created_at", { ascending: false }).limit(50));
+    return Promise.all(((data ?? []) as unknown as { id: string; label: string; created_at: string; snapshot?: unknown }[]).map(async (r) => {
+      if (k && isSealed(r.snapshot)) { try { return { id: r.id, label: (await open<{ label: string }>(k, r.snapshot)).label, createdAt: r.created_at }; } catch { /* fall through */ } }
+      return { id: r.id, label: r.label, createdAt: r.created_at };
+    }));
   }
   async restore(versionId: string) {
     const { data } = check(await this.sb.from("versions").select("snapshot").eq("id", versionId).maybeSingle());
+    if (isSealed(data?.snapshot)) return (await open<{ state: ProjectState }>(this.key(), data!.snapshot as Sealed)).state;
     return (data?.snapshot as ProjectState) ?? null;
   }
   async audit(projectId: string, event: string, detail: Record<string, unknown> = {}, actor = "user") {

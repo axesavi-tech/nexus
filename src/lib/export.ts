@@ -13,7 +13,7 @@ const CLAIM_LABEL: Record<string, string> = {
 };
 export const claimLabel = (c?: string) => (c ? CLAIM_LABEL[c] ?? c : "—");
 
-export function toMarkdown(p: ProjectState, sections: ("thought" | "design" | "evidence" | "intelligence" | "ideas" | "evaluation" | "decision" | "blueprint" | "roadmap" | "map")[] = ["thought", "design", "ideas", "evidence", "intelligence", "evaluation", "decision", "blueprint", "roadmap", "map"]): string {
+export function toMarkdown(p: ProjectState, sections: ("thought" | "setup" | "design" | "evidence" | "intelligence" | "ideas" | "evaluation" | "decision" | "blueprint" | "roadmap" | "map")[] = ["thought", "design", "ideas", "evidence", "intelligence", "setup", "evaluation", "decision", "blueprint", "roadmap", "map"]): string {
   const L: string[] = [];
   const I = p.interpretation;
   L.push(`# ${p.title}`, "", `> ${p.thought}`, "", `_Exported from NEXUS on ${new Date().toISOString().slice(0, 10)}. AI mode: ${p.aiMode === "dev" ? "development templates (not AI analysis)" : "live AI"}. Items marked as inference, assumption or forecast are not verified facts._`, "");
@@ -86,6 +86,19 @@ export function toMarkdown(p: ProjectState, sections: ("thought" | "design" | "e
         "Formulas: " + FORMULAS.map((f) => `${f.name} = ${f.formula}`).join("; "), "");
     }
     if (O.approvals.length) L.push("### Decision history", ...O.approvals.map((a) => `- ${a.at.slice(0, 16).replace("T", " ")} — **${a.action}** “${p.ideas!.ideas.find((i) => i.id === a.ideaId)?.title ?? a.ideaId}” by ${a.by} (engine recommended ${STATUS_LABEL[a.recommended]})${a.note ? `: ${a.note}` : ""}`), "");
+  }
+  const G = p.guide?.setup;
+  if (sections.includes("setup") && G) {
+    L.push(`## Company setup — ${G.country}`, "", `_${G.mode === "live" ? `Live research on ${G.generatedAt.slice(0, 10)} (${G.sources.length} sources)` : G.mode === "curated" ? "Curated official portals" : "Generic checklist"}. General guidance, not legal advice — confirm with the authority or a local professional._`, "", G.summary, "",
+      `**Suggested legal form:** ${G.recommendedForm.form} — ${G.recommendedForm.why}`, "");
+    for (const s of G.steps) {
+      L.push(`- [${p.guide?.setupDone[s.id] ? "x" : " "}] **${s.title}**${s.mandatory ? " (required)" : ""} — ${s.what}`);
+      if (s.documents.length) L.push(`  - Documents: ${s.documents.join("; ")}`);
+      L.push(`  - Authority: ${s.authority} · Time: ${s.timeEstimate} · Cost: ${s.costEstimate} (estimates)`);
+      for (const l of s.links) L.push(`  - [${l.title}](${l.url})`);
+    }
+    if (G.ongoing.length) L.push("", "**Ongoing compliance:**", ...G.ongoing.map((o) => `- ${o.obligation} — ${o.frequency} (${o.authority})`));
+    L.push("", `_${G.caveats}_`, "");
   }
   if (sections.includes("decision") && p.decision) {
     const d = p.decision;

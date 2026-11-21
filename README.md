@@ -2,6 +2,26 @@
 
 > From a thought to a defensible investment decision. From an approved idea to an executable delivery plan.
 
+**Guided founder journey (default experience):** a clean, AI-guided, nine-step path with no mind maps or node diagrams:
+1. Idea
+2. What it's really about
+3. Customers
+4. Ways to do it
+5. Cheap tests
+6. The numbers
+7. **Company setup for any country**
+8. Delivery plan
+9. One-page summary
+
+Company setup works for all 249 ISO countries and territories. With an AI key, Claude researches official sources live with web search. Only links that came from those search results, or from curated official portals, are kept, and the app checks that each one opens. Curated baselines (IN, GB, US, SG, AE, AU, CA) work offline. The full analytical workspace is still one click away under **Advanced**.
+
+**Privacy:** ideas are end-to-end encrypted in the browser with a vault passphrase and a recovery key, so the operator cannot read them. See [docs/SECURITY.md](docs/SECURITY.md).
+
+**Business model:**
+- **Founders (hybrid):** free taster, Plan Pass ₹999 per idea, Founder ₹999/month for 3 ideas, Pro ₹2,999/month for 8 ideas, extra ideas ₹349. Payments go through Razorpay.
+- **Professionals directory:** Verified ₹2,999, Featured ₹9,999 and Premium partner ₹24,999 per year. Premium listings appear inside matching setup steps, labelled Sponsored.
+- **Admin:** listings are reviewed at `/admin/directory`.
+
 **Start here:** [docs/FOUNDATION.md](docs/FOUNDATION.md) (product, architecture, UX, functional spec, plan) · [docs/CHECKLIST.md](docs/CHECKLIST.md) (what's built, tested and deferred).
 
 **Decision intelligence (new):**
@@ -56,6 +76,23 @@ Before inviting real users, in the Supabase dashboard → Authentication:
 1. **URL configuration** → set Site URL to your Vercel URL (sign-up confirmation links use it).
 2. **Providers → Email** → keep “Confirm email” on (recommended) or turn it off for frictionless testing.
 3. **Attack protection** → enable *Leaked password protection* (the only open security advisory).
+
+## Switching on payments and the directory
+
+1. Apply `supabase/migrations/20261121100000_billing_directory.sql` in the Supabase SQL editor (or ask Claude to apply it).
+2. In Vercel → Settings → Environment Variables (Production), add:
+
+| Variable | What it is |
+|---|---|
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project settings → API → service_role. Server only; used to record verified payments and to moderate listings. |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | Razorpay Dashboard → Account & Settings → API keys. Start with **test** keys. |
+| `RAZORPAY_WEBHOOK_SECRET` | Razorpay → Webhooks → add `https://<your-domain>/api/billing/webhook`, events `payment.captured` and `order.paid`. |
+| `ADMIN_EMAILS` | Comma-separated emails allowed to approve listings. |
+| `BILLING_ENFORCE` | Optional. Set to `0` to keep payments on but switch the paywall off. |
+
+The paywall switches itself on only when the Razorpay keys and the service-role key are all set, so nobody is blocked from something they can't buy.
+
+3. Move Vercel to **Pro** before taking money: Hobby is for non-commercial use only.
 
 ## Deploy to Vercel
 

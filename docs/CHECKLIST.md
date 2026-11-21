@@ -76,3 +76,31 @@ Legend: ✅ coded & tested · 🟡 partial · ⏳ deferred (backlog) · ⛔ bloc
 |---|---|
 | Premium handloom sarees online (D2C) — idea → evidence → gates → business case → report → approval → impact alert | ✅ Browser walkthrough in dev mode |
 | Customer onboarding 12 → 3 days (enterprise transformation) | ✅ AI operation tests; available as Sample B |
+
+## Guided founder journey (Nov 2026)
+| Capability | Status | Notes |
+|---|---|---|
+| Clean 9-step AI-guided journey (default `/p/[id]`); no node/mind-map visuals | ✅ | Advanced workspace at `/p/[id]/workspace` |
+| Country selection — all 249 ISO 3166 countries and territories | ✅ | |
+| Company-setup guide: legal form, registration, tax, banking, licences, hiring, IP, data, sector, ongoing | ✅ | Live web research with Claude; curated offline baseline for IN, GB, US, SG, AE, AU, CA; generic checklist otherwise |
+| Link integrity: only search-retrieved or curated official URLs kept; removed count shown | ✅ | Unit-tested |
+| Server-side link checker (https only, no IP/localhost, redirects not followed) | ✅ | “opens / not found / couldn't auto-check” |
+| Setup steps tracked as a checklist and carried into the delivery plan and summary | ✅ | |
+| One-page plan: download (Markdown) and print to PDF | ✅ | |
+| Caching shared research per country across users | ⏳ | Needs a shared table (migration approval) |
+| Regional variation (US state, Indian state, UAE emirate) as a selectable sub-region | ⏳ | Currently noted in caveats and research prompt |
+
+## Privacy, monetisation and directory (Nov 2026)
+| Capability | Status | Notes |
+|---|---|---|
+| End-to-end encryption of ideas (AES-256-GCM, passphrase + recovery key, non-extractable device key) | ✅ | Unit tests prove that no idea text reaches database writes |
+| Migration of older plaintext projects on open | ✅ | Graph, artifact, task and plaintext version rows deleted |
+| Content-Security-Policy hardening | ⏳ | Recommended next step |
+| Hybrid founder pricing (free taster, Plan Pass, Founder, Pro, top-ups) | ✅ | Razorpay one-time orders; monthly plans paid month by month |
+| Automatic subscription renewal | ⏳ | Razorpay Subscriptions |
+| International pricing ($15/month) via merchant of record | ⏳ | Needs a Dodo Payments (or similar) account |
+| Server-side paywall with atomic credit spending (`unlock_project`) | ✅ | Enforced only when payments are configured |
+| Payment verification (checkout signature + webhook, exactly once) | ✅ | Signature checks unit-tested |
+| Professionals directory: public search, listing form, 3 annual tiers, enquiries, admin review | ✅ | Needs the migration plus env keys |
+| Sponsored professionals inside matching setup steps (Premium) | ✅ | Always labelled Sponsored |
+| Billing/directory migration applied to production | ⛔ | Waiting for owner approval |

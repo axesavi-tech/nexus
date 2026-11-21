@@ -269,6 +269,7 @@ export interface ProjectState {
   frameworks: string[];
   design: DesignState | null;
   os: OSState | null;
+  guide: GuideState | null;
   aiMode?: "live" | "dev";
   createdAt: string;
   updatedAt: string;
@@ -463,3 +464,46 @@ export const FinAssumptionsSchema = z.object({
   drivers: z.array(z.object({ key: z.enum(FIN_DRIVERS), value: z.number(), rationale: z.string().max(240) })).min(4).max(9),
   caveat: z.string().max(400),
 });
+
+// ======================================================================================
+// Guided founder journey + country company-setup guide
+// ======================================================================================
+export const SETUP_CATEGORIES = ["structure", "formation", "tax", "banking", "licences", "employment", "ip", "data", "sector", "ongoing"] as const;
+export type SetupCategory = (typeof SETUP_CATEGORIES)[number];
+const url = z.string().max(400);
+export const CountryGuideSchema = z.object({
+  summary: z.string().max(800),
+  recommendedForm: z.object({ form: z.string().max(120), why: z.string().max(500), alternatives: z.array(z.object({ form: z.string().max(120), when: z.string().max(300) })).max(4) }),
+  steps: z.array(z.object({
+    category: z.enum(SETUP_CATEGORIES),
+    title: z.string().min(1).max(140),
+    what: z.string().max(600),
+    documents: z.array(z.string().max(200)).max(10),
+    authority: z.string().max(160),
+    timeEstimate: z.string().max(80),
+    costEstimate: z.string().max(120),
+    mandatory: z.boolean(),
+    links: z.array(z.object({ title: z.string().max(140), url })).max(4),
+  })).min(3).max(24),
+  ongoing: z.array(z.object({ obligation: z.string().max(200), frequency: z.string().max(80), authority: z.string().max(120) })).max(12),
+  caveats: z.string().max(600),
+});
+export type CountryGuideAI = z.infer<typeof CountryGuideSchema>;
+export interface SetupLink { title: string; url: string; source: "search" | "official" }
+export interface SetupStep extends Omit<CountryGuideAI["steps"][number], "links"> { id: string; links: SetupLink[] }
+export interface CountryGuide extends Omit<CountryGuideAI, "steps"> {
+  countryCode: string; country: string; steps: SetupStep[];
+  sources: { title: string; url: string }[];       // every page the research actually retrieved
+  removedLinks: number;                            // links the model proposed that were not in its search results
+  generatedAt: string; mode: "live" | "dev" | "curated";
+}
+export interface GuideState {
+  country: string;                 // ISO code
+  stage: "idea" | "prototype" | "customers" | "revenue";
+  team: string;
+  budget: string;
+  step: string;
+  setup: CountryGuide | null;
+  setupDone: Record<string, boolean>;
+  linkStatus: Record<string, "ok" | "missing" | "unknown">;
+}

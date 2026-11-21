@@ -19,3 +19,15 @@ export async function callAI<T>(op: string, input: unknown, projectId?: string):
   }
   return json;
 }
+
+export async function checkLinksApi(urls: string[]): Promise<Record<string, "ok" | "missing" | "unknown">> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const sb = supabaseBrowser();
+  if (sb) {
+    const { data } = await sb.auth.getSession();
+    if (data.session) headers.authorization = `Bearer ${data.session.access_token}`;
+  }
+  const res = await fetch("/api/links", { method: "POST", headers, body: JSON.stringify({ urls }) });
+  if (!res.ok) return {};
+  return (await res.json()).results ?? {};
+}
