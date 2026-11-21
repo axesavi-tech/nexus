@@ -9,8 +9,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM, ACTION_GUIDE } from "./prompts";
 import {
   InterpretationSchema, NodePatchSchema, IdeasSchema, EvaluationSchema, BlueprintSchema, RoadmapSchema,
-  DIMENSIONS, type NodeAction, type Sliders,
+  EmpathySchema, SparksSchema, ClusterSchema, TestPlanSchema,
+  DIMENSIONS, NODE_ACTIONS, TECHNIQUES, type NodeAction, type Sliders,
 } from "../schemas";
+import { techniqueById, HMW_ANGLE_LABEL } from "../design";
 import * as dev from "./dev";
 import { fitToSchema } from "./fit";
 import { byId as frameworkById } from "../frameworks";
@@ -69,9 +71,9 @@ const wrap = (label: string, v: unknown) => `<user_content label="${label}">\n${
 // ---------- Operation definitions ----------
 const AnalyzeIn = z.object({ thought: z.string().min(1).max(8000), mode: z.enum(["free", "guided", "strategic"]), answers: z.record(z.string(), z.string()).optional() });
 const NodeIn = z.object({
-  action: z.enum(["expand", "deeper", "challenge", "different", "root_cause", "connect", "evidence", "evaluate", "to_solution", "to_action", "missing", "framework", "custom"]),
+  action: z.enum(NODE_ACTIONS),
   frameworkId: z.string().optional(),
-  instruction: z.string().max(1000).optional(),
+  instruction: z.string().max(8000).optional(),
   thought: z.string().max(8000),
   context: z.object({
     focus: z.object({ id: z.string(), type: z.string(), title: z.string(), description: z.string() }),
@@ -85,10 +87,27 @@ const IdeateIn = z.object({
   focus: z.array(z.object({ id: z.string(), type: z.string(), title: z.string(), description: z.string().optional() })).max(30),
   sliders: SliderIn,
   previousTitles: z.array(z.string()).max(20).optional(),
+  sparks: z.array(z.object({ title: z.string(), description: z.string(), votes: z.number().optional(), hmw: z.string().optional() })).max(8).optional(),
+  personas: z.array(z.any()).max(3).optional(),
 });
 const EvaluateIn = z.object({ thought: z.string().max(8000), ideas: z.array(z.any()).min(1).max(8), constraints: z.array(z.string()).max(10).optional() });
 const BlueprintIn = z.object({ thought: z.string().max(8000), interpretation: z.any(), idea: z.any(), evaluation: z.any().optional(), decisionRationale: z.string().max(2000).optional() });
 const RoadmapIn = z.object({ thought: z.string().max(8000), blueprint: z.any(), approach: z.enum(["agile", "waterfall", "hybrid", "personal"]), teamNote: z.string().max(600).optional() });
+
+const EmpathizeIn = z.object({
+  thought: z.string().max(8000), interpretation: z.any().optional(), notes: z.string().max(20000).optional(),
+  stakeholders: z.array(z.object({ title: z.string(), description: z.string().optional() })).max(12).optional(),
+});
+const SparkIn = z.object({
+  thought: z.string().max(8000), hmw: z.string().min(1).max(400), technique: z.enum(TECHNIQUES),
+  count: z.number().int().min(3).max(12), wildness: z.number().min(0).max(100),
+  existing: z.array(z.string().max(120)).max(60),
+  seed: z.object({ title: z.string(), description: z.string() }).optional(),
+  personas: z.array(z.any()).max(3).optional(),
+});
+const ClusterIn = z.object({ hmw: z.string().max(400).optional(), sparks: z.array(z.object({ id: z.string(), title: z.string(), description: z.string() })).min(3).max(60) });
+const TestPlanIn = z.object({ thought: z.string().max(8000), idea: z.any(), personas: z.array(z.any()).max(3).optional() });
+const PROTOTYPES_TXT = "paper_sketch, storyboard, clickable_mockup, wizard_of_oz (fake the automation manually), concierge (deliver the service by hand), fake_door (measure clicks on an offer that doesn't exist yet), landing_page, role_play, physical_mockup, pilot";
 
 function sliderText(s: Record<string, number>) {
   return Object.entries(s).map(([k, v]) => `${k}: ${v}/100`).join(", ");
@@ -120,7 +139,15 @@ Map context: ${wrap("map_context", i.context)}`;
   },
   ideate: {
     input: IdeateIn, output: IdeasSchema, tokens: 5000,
-    prompt: (i: z.infer<typeof IdeateIn>) => `Generate 4 genuinely different solution directions — exactly one per tier: conservative (low risk, limited disruption), practical (meaningful differentiation, credible feasibility), disruptive (redesigns the existing model), moonshot (high uncertainty, transformative). Each must differ in mechanism, target user or business model, not just wording.
+    prompt: (i: z.infer<typeof IdeateIn>) => i.sparks?.length ? `Converge: develop the user's dot-voted sparks into 2–4 well-formed solution concepts. You may combine compatible sparks into one concept; keep the strongest distinct ones separate. Do not drop a spark that received the most votes. Assign each concept the tier that honestly fits it (conservative / practical / disruptive / moonshot) — tiers may repeat.
+Each concept needs intended users (ground them in the personas when given), a complete value proposition, how it works, what differentiates it, key assumptions and risks. Use ids I1..In. In originNodeIds cite map node ids the concept draws from (may be empty).
+Creativity controls: ${sliderText(i.sliders)}.
+In notes, say which sparks were merged and anything the votes may have overlooked.
+Thought: ${wrap("thought", i.thought)}
+Understanding: ${wrap("interpretation", i.interpretation)}
+Voted sparks (with the How Might We each answers): ${wrap("sparks", i.sparks)}
+${i.personas?.length ? `Personas: ${wrap("personas", i.personas)}` : ""}
+Map nodes: ${wrap("map_nodes", i.focus)}` : `Generate 4 genuinely different solution directions — exactly one per tier: conservative (low risk, limited disruption), practical (meaningful differentiation, credible feasibility), disruptive (redesigns the existing model), moonshot (high uncertainty, transformative). Each must differ in mechanism, target user or business model, not just wording.
 Creativity controls (adapt your output to them): ${sliderText(i.sliders)}.
 Each idea needs intended users, a complete value proposition, how it works, what differentiates it, key assumptions and risks. Use ids I1..I4. In originNodeIds cite the map node ids the idea draws from.
 ${i.previousTitles?.length ? `Avoid repeating these earlier ideas: ${i.previousTitles.join("; ")}` : ""}
@@ -128,7 +155,7 @@ In notes, state whether the problem itself might be better reframed, and whether
 Thought: ${wrap("thought", i.thought)}
 Understanding: ${wrap("interpretation", i.interpretation)}
 Selected map nodes: ${wrap("map_nodes", i.focus)}`,
-    dev: (i: z.infer<typeof IdeateIn>) => dev.ideate(i.thought, i.focus, i.sliders as Sliders),
+    dev: (i: z.infer<typeof IdeateIn>) => i.sparks?.length ? dev.conceptsFromSparks(i.sparks) : dev.ideate(i.thought, i.focus, i.sliders as Sliders),
   },
   evaluate: {
     input: EvaluateIn, output: EvaluationSchema, tokens: 6000,
@@ -168,6 +195,57 @@ ${i.teamNote ? `Team/context: ${wrap("team", i.teamNote)}` : ""}
 Thought: ${wrap("thought", i.thought)}
 Blueprint: ${wrap("blueprint", i.blueprint)}`,
     dev: (i: z.infer<typeof RoadmapIn>) => dev.roadmap(i.blueprint, i.approach),
+  },
+  empathize: {
+    input: EmpathizeIn, output: EmpathySchema, tokens: 7000,
+    prompt: (i: z.infer<typeof EmpathizeIn>) => `Design thinking — EMPATHIZE and DEFINE.
+1. Build 2–3 personas for the people most affected (never more than 3). If research notes are provided, ground every persona in them, set basis "user_research", and only use details the notes support. If there are no notes, set basis "proto_persona": these are hypotheses to validate, so keep them plausible and modest, with invented first names only.
+2. For each persona: an empathy map (says / thinks / does / feels — short, concrete, first-person where natural), goals, pains, gains, one representative quote (in quotes only if it comes verbatim from the notes; otherwise a plausible paraphrase), and a 3–6 stage journey with emotion from -2 (very negative) to +2 (very positive), the pain at each stage and the design opportunity it opens.
+3. Insights: 3–8 non-obvious truths about the people (tensions, workarounds, contradictions between says and does). Claim type: research_interpretation when drawn from the notes, otherwise unvalidated_hypothesis.
+4. Point-of-view statements: [user] needs [need — a verb, not a solution] because [insight].
+5. How Might We questions: 6–10, each tied to a POV via povId, spread across angles (${Object.entries(HMW_ANGLE_LABEL).map(([k, v]) => `${k} = ${v}`).join("; ")}). Each HMW must be neither so broad it gives no focus nor so narrow it embeds a solution. Start every one with "How might we".
+6. researchGaps: what real research (who to talk to, what to observe) would most change these personas.
+Use short ids: P1.., IN1.., POV1.., H1...
+Thought: ${wrap("thought", i.thought)}
+Understanding: ${wrap("interpretation", i.interpretation ?? {})}
+Stakeholders on the map: ${wrap("stakeholders", i.stakeholders ?? [])}
+${i.notes?.trim() ? `Research notes from the user: ${wrap("research_notes", i.notes)}` : "No research notes were provided — personas must be proto-personas."}`,
+    dev: (i: z.infer<typeof EmpathizeIn>) => dev.empathize(i.thought, i.stakeholders ?? [], !!i.notes?.trim()),
+  },
+  spark: {
+    input: SparkIn, output: SparksSchema, tokens: 3500,
+    prompt: (i: z.infer<typeof SparkIn>) => {
+      const t = techniqueById(i.technique)!;
+      return `Design thinking — IDEATE (divergent). Technique: ${t.name}. ${t.prompt}
+Generate ${i.count} sparks answering the How Might We question. A spark is a quick, concrete idea: a punchy title (≤ 8 words) and a 1–2 sentence description of what actually happens. No feasibility filtering yet, but every spark must be specific to this challenge — no generic advice. Each spark must differ in mechanism, not just wording.
+Wildness: ${i.wildness}/100 (0 = safe and familiar, 100 = bold and unconventional).
+${i.existing.length ? `Do not repeat or lightly reword these existing sparks: ${wrap("existing_sparks", i.existing)}` : ""}
+${i.seed ? `Seed idea to build on: ${wrap("seed", i.seed)}` : ""}
+How Might We: ${wrap("hmw", i.hmw)}
+Thought: ${wrap("thought", i.thought)}
+${i.personas?.length ? `Personas: ${wrap("personas", i.personas)}` : ""}`;
+    },
+    dev: (i: z.infer<typeof SparkIn>) => dev.sparks(i.technique, i.hmw, i.count, i.seed?.title, i.personas?.map((p) => String((p as { name?: string }).name ?? "")) ?? []),
+  },
+  cluster: {
+    input: ClusterIn, output: ClusterSchema, tokens: 2500,
+    prompt: (i: z.infer<typeof ClusterIn>) => `Design thinking — affinity clustering. Group these sparks into 2–7 themes by the underlying mechanism or strategy (not by surface words). Every spark id must appear in exactly one cluster. Name each cluster in ≤ 4 words and describe the shared theme in one sentence.
+In whitespace, list up to 4 promising angles that NO spark explores yet (to prompt another round of ideation).
+How Might We: ${wrap("hmw", i.hmw ?? "")}
+Sparks: ${wrap("sparks", i.sparks)}`,
+    dev: (i: z.infer<typeof ClusterIn>) => dev.cluster(i.sparks),
+  },
+  testplan: {
+    input: TestPlanIn, output: TestPlanSchema, tokens: 5000,
+    prompt: (i: z.infer<typeof TestPlanIn>) => `Design thinking — PROTOTYPE & TEST, using assumption mapping.
+1. List 4–8 assumptions that must be true for this concept to succeed, spread across desirability (people want it), feasibility (it can be built/delivered) and viability (it can sustain itself). Rate importance 1–5 (5 = the concept fails if wrong) and evidence 1–5 (how much real evidence exists today, given only what the user provided — usually 1–2). Ids A1..An.
+2. Design 2–5 cheap, fast tests for the riskiest assumptions (high importance, low evidence) first. Choose the lowest-fidelity prototype that can produce a real signal: ${PROTOTYPES_TXT}. Each test: what you will put in front of whom, the metric, and a concrete success threshold decided BEFORE running it. Effort in days, cost low/medium/high.
+3. A 3–6 frame storyboard of the ideal user experience with the concept (frame title + caption), usable as a paper prototype.
+Never claim results; these are plans.
+Thought: ${wrap("thought", i.thought)}
+Concept: ${wrap("concept", i.idea)}
+${i.personas?.length ? `Personas: ${wrap("personas", i.personas)}` : ""}`,
+    dev: (i: z.infer<typeof TestPlanIn>) => dev.testplan(i.idea),
   },
 } as const;
 export type OpName = keyof typeof OPS;

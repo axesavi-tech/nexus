@@ -28,7 +28,7 @@ export type Mode = (typeof MODES)[number];
 
 export const NODE_ACTIONS = [
   "expand", "deeper", "challenge", "different", "root_cause", "connect",
-  "evidence", "evaluate", "to_solution", "to_action", "missing", "framework", "custom",
+  "evidence", "evaluate", "to_solution", "to_action", "missing", "framework", "custom", "structure",
 ] as const;
 export type NodeAction = (typeof NODE_ACTIONS)[number];
 
@@ -267,6 +267,7 @@ export interface ProjectState {
   roadmap: Roadmap | null;
   tasks: Task[];
   frameworks: string[];
+  design: DesignState | null;
   aiMode?: "live" | "dev";
   createdAt: string;
   updatedAt: string;
@@ -282,4 +283,91 @@ export interface DecisionRecord {
   date: string;
   reconsiderIf: string;
   risks: string;
+}
+
+// ======================================================================================
+// Design thinking: Empathize → Define → Ideate → Prototype & Test
+// ======================================================================================
+const s200 = z.string().max(200);
+const list = (n: number, len = 200) => z.array(z.string().max(len)).max(n);
+
+export const PersonaSchema = z.object({
+  id: z.string().min(1).max(20),
+  name: z.string().min(1).max(60),
+  role: z.string().max(120),
+  context: z.string().max(400),
+  quote: z.string().max(200),
+  basis: z.enum(["user_research", "proto_persona"]),
+  goals: list(5), pains: list(5), gains: list(5),
+  empathy: z.object({ says: list(4), thinks: list(4), does: list(4), feels: list(4) }),
+  journey: z.array(z.object({
+    stage: z.string().max(60), action: s200,
+    emotion: z.number().int().min(-2).max(2),
+    pain: s200, opportunity: s200,
+  })).min(3).max(6),
+});
+export type Persona = z.infer<typeof PersonaSchema>;
+
+export const HMW_ANGLES = ["amplify_good", "remove_bad", "explore_opposite", "question_assumption", "change_status_quo", "break_into_parts", "analogy"] as const;
+export const EmpathySchema = z.object({
+  personas: z.array(PersonaSchema).min(1).max(3),
+  insights: z.array(z.object({ id: z.string().max(20), text: z.string().max(300), personaId: z.string().max(20), claim: z.enum(CLAIM_TYPES) })).max(8),
+  povs: z.array(z.object({ id: z.string().max(20), personaId: z.string().max(20), user: z.string().max(120), need: s200, insight: z.string().max(300) })).min(1).max(4),
+  hmws: z.array(z.object({ id: z.string().max(20), question: s200, povId: z.string().max(20), angle: z.enum(HMW_ANGLES) })).min(3).max(10),
+  researchGaps: list(6, 300),
+});
+export type Empathy = z.infer<typeof EmpathySchema>;
+
+export const TECHNIQUES = ["brainstorm", "scamper", "analogy", "reverse", "constraints", "crazy8", "persona", "mashup", "build"] as const;
+export type Technique = (typeof TECHNIQUES)[number];
+export const SparksSchema = z.object({
+  sparks: z.array(z.object({ title: z.string().min(1).max(100), description: z.string().max(300), lens: z.string().max(80) })).min(3).max(12),
+});
+export type SparksResult = z.infer<typeof SparksSchema>;
+
+export const ClusterSchema = z.object({
+  clusters: z.array(z.object({ name: z.string().min(1).max(60), theme: s200, sparkIds: z.array(z.string()).max(40) })).min(1).max(7),
+  whitespace: list(4, 300),
+});
+export type ClusterResult = z.infer<typeof ClusterSchema>;
+
+export const PROTOTYPES = ["paper_sketch", "storyboard", "clickable_mockup", "wizard_of_oz", "concierge", "fake_door", "landing_page", "role_play", "physical_mockup", "pilot"] as const;
+export const TestPlanSchema = z.object({
+  assumptions: z.array(z.object({
+    id: z.string().max(20), statement: z.string().max(300),
+    lens: z.enum(["desirability", "feasibility", "viability"]),
+    importance: z.number().int().min(1).max(5),
+    evidence: z.number().int().min(1).max(5),
+  })).min(3).max(8),
+  tests: z.array(z.object({
+    assumptionId: z.string().max(20),
+    prototype: z.enum(PROTOTYPES),
+    description: z.string().max(400), metric: z.string().max(150), successCriteria: z.string().max(150),
+    effortDays: z.number().min(0.5).max(30), cost: z.enum(["low", "medium", "high"]),
+  })).min(1).max(6),
+  storyboard: z.array(z.object({ frame: z.string().max(60), caption: s200 })).min(3).max(6),
+});
+export type TestPlan = z.infer<typeof TestPlanSchema>;
+
+export interface Hmw { id: string; question: string; povId?: string; angle?: (typeof HMW_ANGLES)[number]; source: "user" | "ai" | "dev"; starred?: boolean }
+export interface Spark {
+  id: string; hmwId: string | null; title: string; description: string; technique: Technique | "own";
+  lens?: string; source: "user" | "ai" | "dev"; votes: number; clusterId?: string; parentId?: string; createdAt: string;
+}
+export interface Cluster { id: string; name: string; theme: string }
+export type TestStatus = "untested" | "running" | "validated" | "invalidated" | "inconclusive";
+export interface TestRecord extends TestPlan {
+  ideaId: string;
+  results: Record<string, { status: TestStatus; learning: string; nodeId?: string; evidenceId?: string }>;
+  createdAt: string;
+}
+export interface DesignState {
+  notes: string;
+  empathy: Empathy | null;
+  hmws: Hmw[];
+  activeHmwId: string | null;
+  sparks: Spark[];
+  clusters: Cluster[];
+  whitespace: string[];
+  tests: TestRecord[];
 }
