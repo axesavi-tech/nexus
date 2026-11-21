@@ -2,6 +2,19 @@
 
 > From a thought to a defensible investment decision. From an approved idea to an executable delivery plan.
 
+**Guided founder journey (default experience):** a clean, AI-guided, nine-step path with no mind maps or node diagrams:
+1. Idea
+2. What it's really about
+3. Customers
+4. Ways to do it
+5. Cheap tests
+6. The numbers
+7. **Company setup for any country**
+8. Delivery plan
+9. One-page summary
+
+Company setup works for all 249 ISO countries and territories. With an AI key, Claude researches official sources live with web search. Only links that came from those search results, or from curated official portals, are kept, and the app checks that each one opens. Curated baselines (IN, GB, US, SG, AE, AU, CA) work offline. The full analytical workspace is still one click away under **Advanced**.
+
 **Start here:** [docs/FOUNDATION.md](docs/FOUNDATION.md) (product, architecture, UX, functional spec, plan) · [docs/CHECKLIST.md](docs/CHECKLIST.md) (what's built, tested and deferred).
 
 **Decision intelligence (new):**

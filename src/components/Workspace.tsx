@@ -151,7 +151,8 @@ export function Workspace({ id }: { id: string }) {
           <div className="mt-auto px-5 text-[11px] text-ink3 space-y-1">
             <div>{p.nodes.length} nodes · {p.edges.length} links</div>
             <div>{p.tasks.length} tasks</div>
-            <Link href="/" className="hover:text-ink block pt-2">← Knowledge Vault</Link>
+            <Link href={`/p/${p.id}`} className="hover:text-ink block pt-2">← Guided journey</Link>
+            <Link href="/" className="hover:text-ink block">← All projects</Link>
           </div>
         </nav>
 

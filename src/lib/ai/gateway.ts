@@ -14,37 +14,53 @@ import {
   DIMENSIONS, NODE_ACTIONS, TECHNIQUES, type NodeAction, type Sliders,
 } from "../schemas";
 import { techniqueById, HMW_ANGLE_LABEL } from "../design";
+import { CountryGuideSchema, SETUP_CATEGORIES } from "../schemas";
+import { OFFICIAL, curatedGuide, genericGuide, toGuide } from "../setup";
+import { countryByCode } from "../countries";
 import * as dev from "./dev";
 import { fitToSchema } from "./fit";
 import { byId as frameworkById } from "../frameworks";
 
-export interface ProviderResult { json: unknown; model: string; inputTokens?: number; outputTokens?: number; truncated?: boolean }
+export interface ProviderResult { json: unknown; model: string; inputTokens?: number; outputTokens?: number; truncated?: boolean; retrieved?: { title: string; url: string }[] }
 export interface Provider {
   name: string;
-  call(args: { system: string; user: string; toolName: string; schema: Record<string, unknown>; maxTokens: number }): Promise<ProviderResult>;
+  call(args: { system: string; user: string; toolName: string; schema: Record<string, unknown>; maxTokens: number; search?: { maxUses: number } }): Promise<ProviderResult>;
 }
 
 class AnthropicProvider implements Provider {
   name = "anthropic";
   private client: Anthropic;
   constructor(apiKey: string, private model: string) { this.client = new Anthropic({ apiKey }); }
-  async call({ system, user, toolName, schema, maxTokens }: Parameters<Provider["call"]>[0]): Promise<ProviderResult> {
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens: maxTokens,
-      system,
-      tools: [{ name: toolName, description: "Return the structured result.", input_schema: schema as Anthropic.Tool.InputSchema }],
-      // Newer models reject forced tool_choice ("tool"/"any"), so we ask for the tool and fall back to JSON in text.
-      tool_choice: { type: "auto" },
-      messages: [{ role: "user", content: `${user}\n\nRespond ONLY by calling the ${toolName} tool.` }],
-    });
-    const usage = { model: res.model, inputTokens: res.usage?.input_tokens, outputTokens: res.usage?.output_tokens, truncated: res.stop_reason === "max_tokens" };
-    const block = res.content.find((b) => b.type === "tool_use");
-    if (block && block.type === "tool_use") return { json: block.input, ...usage };
-    const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
-    const json = extractJson(text);
-    if (json === undefined) throw new Error("Model did not return structured output");
-    return { json, ...usage };
+  async call({ system, user, toolName, schema, maxTokens, search }: Parameters<Provider["call"]>[0]): Promise<ProviderResult> {
+    const submit = { name: toolName, description: "Return the structured result.", input_schema: schema as Anthropic.Tool.InputSchema };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tools: any[] = search ? [{ type: "web_search_20250305", name: "web_search", max_uses: search.maxUses }, submit] : [submit];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const messages: any[] = [{ role: "user", content: `${user}\n\nRespond ONLY by calling the ${toolName} tool${search ? " once your research is complete" : ""}.` }];
+    const retrieved: { title: string; url: string }[] = [];
+    let inTok = 0, outTok = 0, model = this.model;
+    // Server-side web search can pause long turns (stop_reason "pause_turn"); continue until the submit tool is called.
+    for (let turn = 0; turn < (search ? 6 : 1); turn++) {
+      const res = await this.client.messages.create({ model: this.model, max_tokens: maxTokens, system, tools, tool_choice: { type: "auto" }, messages });
+      model = res.model; inTok += res.usage?.input_tokens ?? 0; outTok += res.usage?.output_tokens ?? 0;
+      for (const b of res.content as unknown as { type: string; content?: unknown }[]) {
+        if (b.type === "web_search_tool_result" && Array.isArray(b.content))
+          for (const r of b.content as { type: string; url?: string; title?: string }[]) if (r.type === "web_search_result" && r.url) retrieved.push({ title: r.title ?? r.url, url: r.url });
+      }
+      const usage = { model, inputTokens: inTok, outputTokens: outTok, truncated: res.stop_reason === "max_tokens", retrieved };
+      const block = res.content.find((b) => b.type === "tool_use" && b.name === toolName);
+      if (block && block.type === "tool_use") return { json: block.input, ...usage };
+      if (search && (res.stop_reason === "pause_turn" || res.stop_reason === "end_turn")) {
+        messages.push({ role: "assistant", content: res.content });
+        if (res.stop_reason === "end_turn") messages.push({ role: "user", content: `Now call the ${toolName} tool with the complete result, using only links from your search results.` });
+        continue;
+      }
+      const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+      const json = extractJson(text);
+      if (json === undefined) throw new Error("Model did not return structured output");
+      return { json, ...usage };
+    }
+    throw new Error("Research did not finish in time; nothing was changed. Please try again.");
   }
 }
 
@@ -119,6 +135,10 @@ const GapsIn = z.object({
   targets: z.array(z.object({ kind: z.enum(["problem", "concept", "assumption"]), id: z.string(), statement: z.string(), confidence: z.number() })).min(1).max(30),
 });
 const FinIn = z.object({ thought: z.string().max(8000), idea: z.any(), currency: z.string().max(8), notes: z.string().max(2000).optional() });
+const GuideIn = z.object({
+  countryCode: z.string().length(2), idea: z.string().max(2000), businessType: z.string().max(200), sector: z.string().max(200).optional(),
+  stage: z.string().max(40), team: z.string().max(300).optional(), concept: z.string().max(600).optional(),
+});
 const PROTOTYPES_TXT = "paper_sketch, storyboard, clickable_mockup, wizard_of_oz (fake the automation manually), concierge (deliver the service by hand), fake_door (measure clicks on an offer that doesn't exist yet), landing_page, role_play, physical_mockup, pilot";
 
 function sliderText(s: Record<string, number>) {
@@ -297,6 +317,31 @@ Concept: ${wrap("concept", i.idea)}
 ${i.notes ? `User notes: ${wrap("notes", i.notes)}` : ""}`,
     dev: (i: z.infer<typeof FinIn>) => dev.finAssumptions(i.idea),
   },
+  country_guide: {
+    input: GuideIn, output: CountryGuideSchema, tokens: 12000, search: { maxUses: 10 },
+    prompt: (i: z.infer<typeof GuideIn>) => {
+      const c = countryByCode(i.countryCode)?.name ?? i.countryCode;
+      return `You are a company-formation and compliance researcher. Build a practical, step-by-step guide to legally set up and run this business in ${c}.
+RESEARCH FIRST with the web_search tool. Prefer official government sources (company registry, tax authority, labour/social security, data-protection authority, IP office, sector regulators) and use ${c}'s official domains. Search in the local language too if official pages are not in English. Check current thresholds, fees and deadlines — rules change.
+Then call the submit tool with:
+- summary: 2–4 sentences on how founders typically set up this kind of business in ${c}.
+- recommendedForm: the most suitable legal form for this business and stage, why, and alternatives with when each fits.
+- steps (8–20, in the order a founder should do them), covering as relevant: structure, formation (registry, name, documents, founders' IDs, registered address, local-director/residency rules), tax (corporate tax ID, VAT/GST/sales tax and thresholds), banking (business account, KYC documents, payment gateways if selling online), licences (national, regional, municipal, import/export), employment (employer registration, social security, pensions), ip (trademarks), data (privacy/consumer/e-commerce law), sector (rules specific to this business, e.g. food, finance, health, textiles labelling), ongoing (only if not already in "ongoing").
+  For each step: what to do and why, documents needed, the responsible authority (official name), a realistic time estimate and cost estimate (say "check current fee" if unsure — NEVER invent a precise fee), mandatory true/false, and up to 4 links.
+- links: ONLY URLs that appeared in your web_search results in this conversation, preferably official government pages. Never construct or guess a URL. If you found no reliable official page for a step, leave its links empty.
+- ongoing: recurring filings and renewals with frequency and authority.
+- caveats: what varies (region/state, sector, foreign ownership) and that a local professional should confirm.
+Categories must be one of: ${SETUP_CATEGORIES.join(", ")}.
+${OFFICIAL[i.countryCode] ? `Known official portals for ${c} (you may also cite these): ${OFFICIAL[i.countryCode].map((o) => o.url).join(", ")}` : ""}
+Business idea: ${wrap("idea", i.idea)}
+Business type: ${wrap("business_type", i.businessType)}${i.sector ? `\nSector: ${wrap("sector", i.sector)}` : ""}
+Chosen concept: ${wrap("concept", i.concept ?? "not chosen yet")}
+Stage: ${i.stage}. Team: ${wrap("team", i.team ?? "not stated")}`;
+    },
+    dev: (i: z.infer<typeof GuideIn>) => curatedGuide(i.countryCode) ?? genericGuide(countryByCode(i.countryCode)?.name ?? i.countryCode),
+    post: (data: z.infer<typeof CountryGuideSchema>, i: z.infer<typeof GuideIn>, retrieved: { title: string; url: string }[], mode: "live" | "dev") =>
+      toGuide(data, i.countryCode, retrieved, mode === "live" ? "live" : curatedGuide(i.countryCode) ? "curated" : "dev"),
+  },
 } as const;
 export type OpName = keyof typeof OPS;
 
@@ -308,7 +353,9 @@ export async function runOp(op: OpName, rawInput: unknown): Promise<RunOutcome> 
   const provider = getProvider();
   if (!provider) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = def.output.parse((def.dev as any)(input));
+    let data = def.output.parse((def.dev as any)(input)) as unknown;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ("post" in def) data = (def as any).post(data, input, [], "dev");
     return { data, mode: "dev", model: "deterministic-dev-templates" };
   }
   const schema = z.toJSONSchema(def.output, { target: "draft-7" }) as Record<string, unknown>;
@@ -317,19 +364,24 @@ export async function runOp(op: OpName, rawInput: unknown): Promise<RunOutcome> 
   const user = (def.prompt as any)(input) as string;
   const tooLong = () => new Error(`The AI's ${op} output was too long and got cut off; nothing was changed. Try again, or simplify the blueprint or team note.`);
   const describe = (e: z.ZodError) => e.issues.slice(0, 8).map((x) => `${x.path.join(".") || "(root)"}: ${x.message}`).join("\n");
-  let res = await provider.call({ system: SYSTEM, user, toolName: `submit_${op}`, schema, maxTokens: def.tokens });
+  const search = "search" in def ? (def as unknown as { search: { maxUses: number } }).search : undefined;
+  let res = await provider.call({ system: SYSTEM, user, toolName: `submit_${op}`, schema, maxTokens: def.tokens, search });
+  const retrieved = [...(res.retrieved ?? [])];
   let parsed = def.output.safeParse(fitToSchema(res.json, schema));
   let repaired = false;
   if (!parsed.success) {
     repaired = true;
     const issues = describe(parsed.error);
     const hint = res.truncated ? "\nYour previous output was cut off at the length limit — be markedly more concise." : "";
-    res = await provider.call({ system: SYSTEM, user: `${user}\n\nYour previous output failed validation:\n${issues}${hint}\nReturn a corrected, complete result.`, toolName: `submit_${op}`, schema, maxTokens: def.tokens });
+    res = await provider.call({ system: SYSTEM, user: `${user}\n\nYour previous output failed validation:\n${issues}${hint}\nReturn a corrected, complete result.`, toolName: `submit_${op}`, schema, maxTokens: def.tokens, search });
+    retrieved.push(...(res.retrieved ?? []));
     parsed = def.output.safeParse(fitToSchema(res.json, schema));
     if (!parsed.success) {
       if (res.truncated) throw tooLong();
       throw new Error(`AI output failed schema validation twice; nothing was changed. Details: ${describe(parsed.error).replace(/\n/g, "; ")}`);
     }
   }
-  return { data: parsed.data, mode: "live", model: res.model, tokens: { input: res.inputTokens, output: res.outputTokens }, repaired };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = "post" in def ? (def as any).post(parsed.data, input, retrieved, "live") : parsed.data;
+  return { data, mode: "live", model: res.model, tokens: { input: res.inputTokens, output: res.outputTokens }, repaired };
 }

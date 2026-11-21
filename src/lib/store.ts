@@ -11,7 +11,8 @@ import { REPORT_QUESTIONS, checkCitations, fingerprint, recommendAll } from "./d
 import { DEFAULT_INPUTS, SCENARIO_DEFAULTS, metrics, scenarioTable } from "./finance";
 import { applyPatch, contextFor, descendants, makeNode, nid, now, placeNew, radialLayout, sanitizeRoadmap, schedule } from "./graph";
 import { recommendFrameworks } from "./frameworks";
-import { callAI } from "./client";
+import { callAI, checkLinksApi } from "./client";
+import type { CountryGuide, GuideState } from "./schemas";
 import { getRepo } from "./repo";
 
 export interface Pending {
@@ -69,6 +70,16 @@ interface S {
   researchGaps: () => Promise<void>;
   suggestFinancials: (ideaId: string, currency: string, notes?: string) => Promise<void>;
   approve: (ideaId: string, action: ApprovalRecord["action"], by: string, note: string) => string | null;
+  // Guided founder journey
+  guide: (fn: (g: GuideState) => GuideState, label?: string) => void;
+  setupGuide: () => Promise<void>;
+  checkLinks: () => Promise<void>;
+  chooseConcept: (ideaId: string) => void;
+  buildPlan: () => Promise<void>;
+}
+
+export function emptyGuide(country = "IN"): GuideState {
+  return { country, stage: "idea", team: "", budget: "", step: "idea", setup: null, setupDone: {}, linkStatus: {} };
 }
 
 const personaBrief = (e: Empathy | null | undefined) =>
@@ -575,6 +586,59 @@ export const useNexus = create<S>((set, get) => {
       get().os((o) => ({ ...o, approvals: [...o.approvals, record] }), `decision.${action}`);
       if (action === "reject") get().set((c) => ({ ...c, nodes: c.nodes.map((n) => (n.tags.includes(`idea:${ideaId}`) ? { ...n, status: "rejected" } : n)) }));
       return null;
+    },
+
+    guide: (fn, label) => get().set((cur) => ({ ...cur, guide: fn(cur.guide ?? emptyGuide()) }), label),
+
+    setupGuide: async () => {
+      const p = get().p!;
+      const g = p.guide ?? emptyGuide();
+      const idea = p.ideas?.ideas.find((i) => i.id === p.selectedIdeaId);
+      await run("Researching official company-setup requirements — this can take a minute or two…", async () => {
+        const r = await callAI<CountryGuide>("country_guide", {
+          countryCode: g.country, idea: p.thought.slice(0, 2000),
+          businessType: `${p.interpretation?.domain ?? ""} (${p.interpretation?.category ?? "business"})`.slice(0, 200),
+          sector: p.interpretation?.domain?.slice(0, 200), stage: g.stage, team: g.team || undefined,
+          concept: idea ? `${idea.title}: ${idea.summary}`.slice(0, 600) : undefined,
+        }, p.id);
+        snapshotBefore("company setup guide");
+        get().guide((cur) => ({ ...cur, setup: r.data, setupDone: Object.fromEntries(Object.entries(cur.setupDone).filter(([k]) => r.data.steps.some((s) => s.id === k))) }), "ai.country_guide");
+      });
+      await get().checkLinks();
+    },
+
+    checkLinks: async () => {
+      const g = get().p?.guide;
+      if (!g?.setup) return;
+      const urls = [...new Set(g.setup.steps.flatMap((s) => s.links.map((l) => l.url)))];
+      if (!urls.length) return;
+      try {
+        const res = await checkLinksApi(urls);
+        if (Object.keys(res).length) get().setQuiet((c) => ({ ...c, guide: c.guide && { ...c.guide, linkStatus: { ...c.guide.linkStatus, ...res } } }));
+      } catch { /* link checking is best effort */ }
+    },
+
+    chooseConcept: (ideaId) => {
+      const p = get().p!;
+      const idea = p.ideas?.ideas.find((i) => i.id === ideaId);
+      if (!idea) return;
+      get().decide({
+        question: `Which direction should we take for “${p.title}”?`, optionsConsidered: (p.ideas?.ideas ?? []).map((i) => i.title), criteria: p.weights,
+        chosenOption: idea.title, rationale: "Chosen by the founder in the guided journey.", decisionMaker: "Founder", date: now().slice(0, 10),
+        reconsiderIf: "Validation tests fail or the numbers do not work.", risks: idea.risks.join("; "),
+      }, ideaId);
+    },
+
+    buildPlan: async () => {
+      const p = get().p!;
+      if (!p.selectedIdeaId) { set({ error: "Choose a direction first." }); return; }
+      if (!p.blueprint) { await get().designSolution(); if (get().error || !get().p?.blueprint) return; }
+      const cur = get().p!;
+      const g = cur.guide ?? emptyGuide();
+      const approach = g.stage === "idea" || g.stage === "prototype" ? "personal" : "hybrid";
+      const setupNote = cur.guide?.setup ? ` Company setup in ${cur.guide.setup.country} is planned separately (${cur.guide.setup.steps.filter((s) => s.mandatory).length} mandatory steps); include one task to complete it before launch.` : "";
+      const team = `${g.team || "Founder, part-time"}${g.budget ? `; budget ${g.budget}` : ""}.${setupNote}`.slice(0, 600);
+      await get().planRoadmap(approach === "personal" ? "agile" : "hybrid", now().slice(0, 10), team);
     },
 
     saveVersion: async (label) => {
