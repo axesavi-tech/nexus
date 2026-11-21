@@ -52,6 +52,8 @@ Knowledge Vault (home)
     ├── Centre: active view
     │   ├── Thought Room (interpretation, questions, frameworks)
     │   ├── Infinity Canvas (Mind map · Issue tree · Affinity views of the same graph)
+    │   ├── Design Studio (Empathize: personas, empathy maps, journeys · Define: insights, POV, How Might We ·
+    │   │                  Ideate: 9-technique spark board, clustering, dot voting · Prototype & Test: assumption map, test cards)
     │   ├── Idea Lab (creativity controls, options, quality flags, lineage)
     │   ├── Consulting Board (ranking, matrix, weights, custom criteria, sensitivity,
     │   │                     risk-vs-impact + Pareto, assumption register, decision room)
@@ -94,6 +96,8 @@ Layer separation follows §20 of the prompt: presentation (components) · projec
 | Project (Thought) | `projects` | Original thought preserved verbatim; `interpretation` jsonb; `settings` (mode, sliders, weights, answers, selected idea, frameworks). |
 | Node | `nodes` (project_id, id) | 19 semantic types, status, tags, parent, x/y, `data` (collapsed, confidence, owner), `provenance` (source user/ai/dev, op, claim type, time). |
 | Edge | `edges` | 7 relationship kinds incl. cross-links and dependencies. |
+| Design studio state (notes, personas, HMWs, sparks, clusters, test records) | `projects.settings.design` | Kept in settings so no schema change is needed; can move to `artifacts` later. |
+| Design studio (notes, personas, HMWs, sparks, clusters, test records) | `projects.settings.design` | Stored in settings so no schema change was needed; can move to `artifacts` once the kind check allows `design`. |
 | Idea set, Evaluation, Decision, Blueprint, Roadmap | `artifacts` (one row per kind) | Structured JSON, validated by the same zod schemas used for AI output. |
 | Task | `tasks` | owner, due, priority, status, dependencies, acceptance criteria, evidence of completion, milestone, related node (traceability). |
 | Version | `versions` | Full project snapshot; auto before every AI change + manual. |
@@ -117,6 +121,18 @@ Undo/redo in memory (80 steps) → automatic snapshot to `versions` before each 
 | `ideate` | interpretation, selected nodes, creativity sliders, previous titles | `IdeasSchema` | One idea per tier; lineage via `originNodeIds` |
 | `evaluate` | ideas, constraints | `EvaluationSchema` | Model judges; code computes weights, totals, sensitivity, Pareto |
 | `blueprint` | chosen idea, evaluation, decision rationale | `BlueprintSchema` | Category-specific sections for all 5 idea types |
+| `empathize` | thought, interpretation, research notes, stakeholder nodes | `EmpathySchema` | Personas marked `user_research` only when notes support them, else `proto_persona`; journeys, insights, POVs, 6–10 HMWs across 7 angles |
+| `spark` | HMW, technique, wildness, existing sparks, optional seed | `SparksSchema` | 9 techniques (`design.ts`); near-duplicates dropped client-side |
+| `cluster` | sparks for the active HMW | `ClusterSchema` | Affinity themes + "whitespace" angles nobody explored |
+| `ideate` (sparks mode) | top dot-voted sparks + personas | `IdeasSchema` | Converges sparks into 2–4 concepts; feeds the normal evaluate → decide → blueprint flow |
+| `testplan` | concept, personas | `TestPlanSchema` | Assumption map (importance × evidence), test cards, storyboard; results write assumption/evidence nodes |
+| `node` (`structure`) | raw brain dump | `NodePatchSchema` | Messy notes → typed nodes, shown as a preview patch |
+| `empathize` | thought, interpretation, research notes, stakeholder nodes | `EmpathySchema` | Personas marked `user_research` only when notes support them, otherwise `proto_persona`; journeys, insights, POVs, 6–10 HMWs across 7 angles |
+| `spark` | HMW, technique, wildness, existing sparks, optional seed | `SparksSchema` | 9 techniques (`design.ts`); near-duplicates dropped client-side |
+| `cluster` | sparks for the active HMW | `ClusterSchema` | Affinity themes + unexplored "whitespace" angles |
+| `ideate` (sparks mode) | top dot-voted sparks + personas | `IdeasSchema` | Converges sparks into 2–4 concepts that feed evaluate → decide → blueprint |
+| `testplan` | concept, personas | `TestPlanSchema` | Assumption map (importance × evidence), test cards, storyboard; recorded results write assumption + evidence nodes, so a failed assumption flags downstream work |
+| `node` · `structure` | raw brain dump | `NodePatchSchema` | Messy notes → typed nodes, shown as a preview patch |
 | `roadmap` | blueprint, approach, team note | `RoadmapSchema` | Sanitised (dangling deps, cycles, orphan milestones) then scheduled deterministically |
 
 The system prompt enforces research integrity (no invented sources, statistics, competitors, interviews), honest claim types, reframing checks, and treats all user content inside `<user_content>` tags as data (prompt-injection resistance). The **multi-agent** roles of §9 map onto these operations today (Discovery = analyze, Creative = ideate, Critical = challenge/missing, Strategy = frameworks/evaluate, Architect = blueprint, Implementation = roadmap); a true orchestrator with parallel agents and conflict recording is Phase 2.
